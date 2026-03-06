@@ -1,0 +1,171 @@
+esphome:
+  name: nartis-wmbus-reader
+  friendly_name: Nartis Meter Reader
+
+esp32:
+  board: esp32dev
+
+logger:
+  level: DEBUG
+
+api:
+
+ota:
+  platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+external_components:
+  - source: github://latonita/esphome-nartis-wmbus
+    components: [nartis_wmbus]
+    refresh: 1s
+
+nartis_wmbus:
+  id: nartis
+  pin_sdio: GPIO23
+  pin_sclk: GPIO18
+  pin_csb: GPIO5
+  pin_fcsb: GPIO17
+  pin_gpio1: GPIO16
+  channel: 1
+  # decryption_key: "5A435A66755436363669526467504E48"  # default "ZCZfuT666iRdgPNH"
+  # system_title: "1122334455667788"                     # default placeholder
+  mode: session         # session / listen / sniffer
+  update_interval: 60s
+
+sensor:
+  # --- Instantaneous values ---
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Voltage L1"
+    obis_code: "1.0.32.7.0.255"
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Voltage L2"
+    obis_code: "1.0.52.7.0.255"
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Voltage L3"
+    obis_code: "1.0.72.7.0.255"
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Current L1"
+    obis_code: "1.0.31.7.0.255"
+    unit_of_measurement: A
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Current L2"
+    obis_code: "1.0.51.7.0.255"
+    unit_of_measurement: A
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Current L3"
+    obis_code: "1.0.71.7.0.255"
+    unit_of_measurement: A
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Active Power"
+    obis_code: "1.0.1.7.0.255"
+    unit_of_measurement: W
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Frequency"
+    obis_code: "1.0.14.7.0.255"
+    unit_of_measurement: Hz
+    accuracy_decimals: 2
+    device_class: frequency
+    state_class: measurement
+
+  # --- Energy totals ---
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Total Energy Import"
+    obis_code: "1.0.1.8.0.255"
+    unit_of_measurement: kWh
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Total Energy Export"
+    obis_code: "1.0.2.8.0.255"
+    unit_of_measurement: kWh
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Total Reactive Import"
+    obis_code: "1.0.3.8.0.255"
+    unit_of_measurement: kvarh
+    accuracy_decimals: 2
+    state_class: total_increasing
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Total Reactive Export"
+    obis_code: "1.0.4.8.0.255"
+    unit_of_measurement: kvarh
+    accuracy_decimals: 2
+    state_class: total_increasing
+
+  # --- Status ---
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Current Tariff"
+    obis_code: "0.0.96.14.0.255"
+    class_id: 1
+    attribute: 2
+    icon: mdi:counter
+
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Meter Status"
+    obis_code: "0.0.96.128.3.255"
+    class_id: 1
+    attribute: 2
+    icon: mdi:information-outline
+
+text_sensor:
+  - platform: nartis_wmbus
+    nartis_wmbus_id: nartis
+    name: "Meter Clock"
+    obis_code: "0.0.1.0.0.255"
+    class_id: 8
+    attribute: 2
+    icon: mdi:clock-outline
