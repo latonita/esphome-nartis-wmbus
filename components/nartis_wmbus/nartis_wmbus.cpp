@@ -1,6 +1,7 @@
 #include "nartis_wmbus.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/application.h"
 #include "esphome/core/preferences.h"
 
@@ -464,11 +465,18 @@ bool NartisWmbusComponent::parse_aare_(const uint8_t *data, uint16_t len) {
         memcpy(meter_system_title_, &data[pos + 2], 8);
         system_title_valid_ = true;
         found_system_title = true;
-        ESP_LOGD(TAG, "AARE: meter system title: %02X%02X%02X%02X%02X%02X%02X%02X",
+        ESP_LOGI(TAG, "************************************************************");
+        ESP_LOGI(TAG, "  Meter system title: %02X%02X%02X%02X%02X%02X%02X%02X",
                  meter_system_title_[0], meter_system_title_[1],
                  meter_system_title_[2], meter_system_title_[3],
                  meter_system_title_[4], meter_system_title_[5],
                  meter_system_title_[6], meter_system_title_[7]);
+        ESP_LOGI(TAG, "  Add to YAML:  meter_system_title: \"%02X%02X%02X%02X%02X%02X%02X%02X\"",
+                 meter_system_title_[0], meter_system_title_[1],
+                 meter_system_title_[2], meter_system_title_[3],
+                 meter_system_title_[4], meter_system_title_[5],
+                 meter_system_title_[6], meter_system_title_[7]);
+        ESP_LOGI(TAG, "************************************************************");
       }
     }
 
@@ -774,6 +782,11 @@ void NartisWmbusComponent::register_sensor(NartisWmbusSensorBase *sensor) {
 void NartisWmbusComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up Nartis W-MBus component...");
 
+  // Auto-generate our system title from ESP32 MAC: 'E' 'S' + 6 MAC bytes
+  uint8_t mac[6];
+  get_mac_address_raw(mac);
+  system_title_ = {'E', 'S', mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]};
+
   // Initialize radio
   radio_.set_pins(pin_sdio_, pin_sclk_, pin_csb_, pin_fcsb_, pin_gpio1_);
 
@@ -791,15 +804,19 @@ void NartisWmbusComponent::setup() {
         this->state_ = State::SNIFFING;
         break;
       case Mode::LISTEN:
-        // In listen mode, system_title config = meter's system title (for decryption)
-        memcpy(this->meter_system_title_, this->system_title_.data(), 8);
-        this->system_title_valid_ = true;
-        ESP_LOGI(TAG, "Entering LISTEN mode on ch %d (%.3f MHz), sys_title=%02X%02X%02X%02X%02X%02X%02X%02X",
-                 this->channel_, freq,
-                 this->meter_system_title_[0], this->meter_system_title_[1],
-                 this->meter_system_title_[2], this->meter_system_title_[3],
-                 this->meter_system_title_[4], this->meter_system_title_[5],
-                 this->meter_system_title_[6], this->meter_system_title_[7]);
+        if (this->meter_sys_title_configured_) {
+          memcpy(this->meter_system_title_, this->configured_meter_sys_title_.data(), 8);
+          this->system_title_valid_ = true;
+          ESP_LOGI(TAG, "Entering LISTEN mode on ch %d (%.3f MHz), meter_sys_title=%02X%02X%02X%02X%02X%02X%02X%02X",
+                   this->channel_, freq,
+                   this->meter_system_title_[0], this->meter_system_title_[1],
+                   this->meter_system_title_[2], this->meter_system_title_[3],
+                   this->meter_system_title_[4], this->meter_system_title_[5],
+                   this->meter_system_title_[6], this->meter_system_title_[7]);
+        } else {
+          ESP_LOGW(TAG, "Entering LISTEN mode on ch %d (%.3f MHz) — no meter_system_title configured, decryption disabled",
+                   this->channel_, freq);
+        }
         this->state_ = State::LISTENING;
         break;
       default:
@@ -817,6 +834,19 @@ void NartisWmbusComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  AES Key: %02X%02X%02X%02X...%02X%02X%02X%02X",
                 decryption_key_[0], decryption_key_[1], decryption_key_[2], decryption_key_[3],
                 decryption_key_[12], decryption_key_[13], decryption_key_[14], decryption_key_[15]);
+  ESP_LOGCONFIG(TAG, "  Our System Title: %02X%02X%02X%02X%02X%02X%02X%02X (from MAC)",
+                system_title_[0], system_title_[1], system_title_[2], system_title_[3],
+                system_title_[4], system_title_[5], system_title_[6], system_title_[7]);
+  if (!meter_id_.empty())
+    ESP_LOGCONFIG(TAG, "  Meter ID: %s", meter_id_.c_str());
+  if (meter_sys_title_configured_)
+    ESP_LOGCONFIG(TAG, "  Meter System Title: %02X%02X%02X%02X%02X%02X%02X%02X",
+                  configured_meter_sys_title_[0], configured_meter_sys_title_[1],
+                  configured_meter_sys_title_[2], configured_meter_sys_title_[3],
+                  configured_meter_sys_title_[4], configured_meter_sys_title_[5],
+                  configured_meter_sys_title_[6], configured_meter_sys_title_[7]);
+  else
+    ESP_LOGCONFIG(TAG, "  Meter System Title: not configured (will obtain from AARE)");
   ESP_LOGCONFIG(TAG, "  DLMS Password: %s", DLMS_PASSWORD);
   ESP_LOGCONFIG(TAG, "  Client SAP: 0x%02X", DLMS_CLIENT_SAP);
   ESP_LOGCONFIG(TAG, "  Invocation Counter: %u", invocation_counter_);
