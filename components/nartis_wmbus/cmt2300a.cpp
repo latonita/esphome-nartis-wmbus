@@ -133,15 +133,15 @@ void CMT2300A::apply_fixups_() {
 
   uint8_t tmp;
 
-  // 1: CUS_IO_SEL (0x65) = 0x20 — GPIO pin mode: GPIO1=INT1, others default
-  write_reg(0x65, 0x20);
+  // 1: CUS_IO_SEL (0x65) = 0x20 — GPIO pin mode: GPIO2=INT1, GPIO3=INT2, GPIO1=DOUT/DIN
+  write_reg(CMT_REG_IO_SEL, 0x20);
 
   // 2: CUS_INT2_CTL (0x67) — preserve top 3, set low 5 to 0x0C
   tmp = read_reg(0x67);
   write_reg(0x67, (tmp & 0xE0) | 0x0C);
 
   // 3: CUS_INT_EN (0x68) = 0x39 — enable TX_DONE, SYNC_OK, CRC_OK, PKT_DONE
-  write_reg(0x68, 0x39);
+  write_reg(CMT_REG_INT_ENABLE, 0x39);
 
   // 4: CUS_SYS2 (0x0D) — clear bits 7:5 (disable LFOSC calibration timers)
   tmp = read_reg(0x0D);

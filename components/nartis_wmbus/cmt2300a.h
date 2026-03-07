@@ -24,11 +24,11 @@ static constexpr uint8_t CMT_TOTAL_REGS = 96;
 
 // CMT2300A status register addresses
 static constexpr uint8_t CMT_REG_MODE_STA = 0x61;       // Mode status
-static constexpr uint8_t CMT_REG_FIFO_FLAG = 0x65;      // FIFO flags
-static constexpr uint8_t CMT_REG_INT_FLAG1 = 0x66;      // Interrupt flag 1
-static constexpr uint8_t CMT_REG_INT_FLAG2 = 0x67;      // Interrupt flag 2
-// Note: RSSI is also at 0x69 (same as FIFO_CTL) — read via read_reg(0x69) if needed
-static constexpr uint8_t CMT_REG_INT_ENABLE = 0x09;     // Interrupt enable
+static constexpr uint8_t CMT_REG_IO_SEL = 0x65;         // CUS_IO_SEL: GPIO pin function select
+static constexpr uint8_t CMT_REG_INT_FLAG1 = 0x66;      // CUS_INT1_CTL: Interrupt flag 1
+static constexpr uint8_t CMT_REG_INT_FLAG2 = 0x67;      // CUS_INT2_CTL: Interrupt flag 2
+static constexpr uint8_t CMT_REG_INT_ENABLE = 0x68;     // CUS_INT_EN: Interrupt enable
+static constexpr uint8_t CMT_REG_FIFO_FLAG = 0x6E;      // CUS_FIFO_FLAG: FIFO status flags
 static constexpr uint8_t CMT_REG_FIFO_CTL = 0x69;       // FIFO control (Control Bank 1, CUS_FIFO_CTL)
 
 // CUS_INT1_CTL (0x60) source values — also used as mode control when written differently
