@@ -21,6 +21,7 @@ CONF_CHANNEL = "channel"
 CONF_DECRYPTION_KEY = "decryption_key"
 CONF_SYSTEM_TITLE = "system_title"
 CONF_MODE = "mode"
+CONF_AGGRESSIVE_RECONNECT = "aggressive_reconnect"
 
 # Default AES-128 key from firmware ROM 0x23848: "ZCZfuT666iRdgPNH"
 DEFAULT_KEY = "5A435A66755436363669526467504E48"
@@ -65,9 +66,10 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_CHANNEL, default=1): cv.int_range(min=0, max=3),
             cv.Optional(CONF_DECRYPTION_KEY, default=DEFAULT_KEY): validate_key,
             cv.Optional(CONF_SYSTEM_TITLE, default=DEFAULT_SYSTEM_TITLE): validate_system_title,
-            cv.Optional(CONF_MODE, default="session"): cv.one_of(
+            cv.Optional(CONF_MODE, default="sniffer"): cv.one_of(
                 "session", "listen", "sniffer", lower=True
             ),
+            cv.Optional(CONF_AGGRESSIVE_RECONNECT, default=False): cv.boolean,
             cv.Optional(
                 CONF_UPDATE_INTERVAL, default="60s"
             ): cv.update_interval,
@@ -108,5 +110,7 @@ async def to_code(config):
 
     mode_map = {"session": 0, "listen": 1, "sniffer": 2}
     cg.add(var.set_mode(mode_map[config[CONF_MODE]]))
+
+    cg.add(var.set_aggressive_reconnect(config[CONF_AGGRESSIVE_RECONNECT]))
 
     cg.add(var.set_update_interval(config[CONF_UPDATE_INTERVAL]))

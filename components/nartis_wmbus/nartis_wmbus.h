@@ -58,7 +58,6 @@ static constexpr uint16_t MAX_APDU_SIZE = 300;
 // Timeouts (ms)
 static constexpr uint32_t AARE_TIMEOUT_MS = 3000;
 static constexpr uint32_t RESPONSE_TIMEOUT_MS = 5000;
-static constexpr uint32_t RELEASE_TIMEOUT_MS = 2000;
 static constexpr uint32_t SESSION_TIMEOUT_MS = 5000;
 static constexpr uint8_t MAX_RETRIES = 3;
 
@@ -111,11 +110,6 @@ static const uint8_t AARQ_TEMPLATE[] = {
     0x01, 0x2C,                         // client-max-receive-pdu-size = 300
 };
 
-// RLRQ (Release Request)
-static const uint8_t RLRQ_TEMPLATE[] = {
-    0x62, 0x00,  // RLRQ tag + length (minimal)
-};
-
 // ============================================================================
 // Component
 // ============================================================================
@@ -147,6 +141,7 @@ class NartisWmbusComponent : public PollingComponent {
   void set_decryption_key(const std::array<uint8_t, 16> &key) { decryption_key_ = key; }
   void set_system_title(const std::array<uint8_t, 8> &title) { system_title_ = title; }
   void set_mode(uint8_t m) { mode_ = static_cast<Mode>(m); }
+  void set_aggressive_reconnect(bool v) { aggressive_reconnect_ = v; }
 
   void register_sensor(NartisWmbusSensorBase *sensor);
 
@@ -155,14 +150,12 @@ class NartisWmbusComponent : public PollingComponent {
   enum class State : uint8_t {
     NOT_INITIALIZED,
     IDLE,
-    INIT_RADIO,
+    INIT_SESSION,
     SEND_AARQ,
     WAIT_AARE,
     DATA_REQUEST,
     WAIT_RESPONSE,
     DATA_NEXT,
-    SEND_RELEASE,
-    WAIT_RELEASE,
     PUBLISH,
     LISTENING,
     SNIFFING,
@@ -192,6 +185,7 @@ class NartisWmbusComponent : public PollingComponent {
   InternalGPIOPin *pin_gpio1_{nullptr};
   uint8_t channel_{1};
   Mode mode_{Mode::SESSION};
+  bool aggressive_reconnect_{false};
 
   // Encryption key and system title
   std::array<uint8_t, 16> decryption_key_{};
@@ -200,6 +194,7 @@ class NartisWmbusComponent : public PollingComponent {
   // DLMS session state
   uint8_t meter_system_title_[8]{};
   bool system_title_valid_{false};
+  bool associated_{false};
   uint32_t invocation_counter_{0};
   uint8_t access_nr_{0};
   uint8_t retry_count_{0};

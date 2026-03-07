@@ -821,6 +821,7 @@ void NartisWmbusComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Client SAP: 0x%02X", DLMS_CLIENT_SAP);
   ESP_LOGCONFIG(TAG, "  Invocation Counter: %u", invocation_counter_);
   ESP_LOGCONFIG(TAG, "  Mode: %s", LOG_STR_ARG(mode_to_string_(mode_)));
+  ESP_LOGCONFIG(TAG, "  Aggressive Reconnect: %s", YESNO(aggressive_reconnect_));
   ESP_LOGCONFIG(TAG, "  Sensors: %d", sensors_.size());
   LOG_UPDATE_INTERVAL(this);
 }
@@ -848,7 +849,7 @@ void NartisWmbusComponent::update() {
   }
 
   ESP_LOGD(TAG, "Starting data collection session");
-  set_next_state_(State::INIT_RADIO);
+  set_next_state_(State::INIT_SESSION);
 }
 
 void NartisWmbusComponent::set_next_state_(State next_state) {
@@ -862,14 +863,12 @@ const LogString *NartisWmbusComponent::state_to_string_(State state) {
   switch (state) {
     case State::NOT_INITIALIZED: return LOG_STR("NOT_INITIALIZED");
     case State::IDLE:            return LOG_STR("IDLE");
-    case State::INIT_RADIO:      return LOG_STR("INIT_RADIO");
+    case State::INIT_SESSION:      return LOG_STR("INIT_SESSION");
     case State::SEND_AARQ:       return LOG_STR("SEND_AARQ");
     case State::WAIT_AARE:       return LOG_STR("WAIT_AARE");
     case State::DATA_REQUEST:    return LOG_STR("DATA_REQUEST");
     case State::WAIT_RESPONSE:   return LOG_STR("WAIT_RESPONSE");
     case State::DATA_NEXT:       return LOG_STR("DATA_NEXT");
-    case State::SEND_RELEASE:    return LOG_STR("SEND_RELEASE");
-    case State::WAIT_RELEASE:    return LOG_STR("WAIT_RELEASE");
     case State::PUBLISH:         return LOG_STR("PUBLISH");
     case State::LISTENING:       return LOG_STR("LISTENING");
     case State::SNIFFING:        return LOG_STR("SNIFFING");
@@ -887,12 +886,12 @@ void NartisWmbusComponent::loop() {
 
   // Session watchdog — force back to IDLE if stuck
   if (this->state_ != State::IDLE && this->state_ != State::SNIFFING &&
-      this->state_ != State::LISTENING && this->state_ != State::INIT_RADIO &&
+      this->state_ != State::LISTENING && this->state_ != State::INIT_SESSION &&
       check_session_timeout_()) {
     ESP_LOGW(TAG, "Session timeout (%ums) in state %s — aborting",
              SESSION_TIMEOUT_MS, LOG_STR_ARG(state_to_string_(state_)));
     radio_.go_standby();
-
+    associated_ = false;
     set_next_state_(State::IDLE);
     return;
   }
@@ -901,7 +900,7 @@ void NartisWmbusComponent::loop() {
     case State::IDLE:
       break;
 
-    case State::INIT_RADIO: {
+    case State::INIT_SESSION: {
       session_start_ms_ = millis();
 
       // Reset sensor states
@@ -909,9 +908,25 @@ void NartisWmbusComponent::loop() {
         pair.second->reset();
       }
 
-      system_title_valid_ = false;
       retry_count_ = 0;
-      set_next_state_(State::SEND_AARQ);
+
+      if (!system_title_valid_) {
+        // Never synced — must associate
+        set_next_state_(State::SEND_AARQ);
+      } else if (associated_) {
+        // Already associated — skip AARQ, go straight to data
+        request_iter_ = sensors_.begin();
+        set_next_state_(State::DATA_REQUEST);
+      } else if (aggressive_reconnect_) {
+        // Lost association, aggressive mode — re-AARQ to reclaim
+        ESP_LOGW(TAG, "Association lost — aggressive reconnect, sending AARQ");
+        set_next_state_(State::SEND_AARQ);
+      } else {
+        // Lost association, normal mode — try GET, warn if fails
+        ESP_LOGW(TAG, "Association lost — trying data request (meter may be displaced)");
+        request_iter_ = sensors_.begin();
+        set_next_state_(State::DATA_REQUEST);
+      }
       break;
     }
 
@@ -976,6 +991,7 @@ void NartisWmbusComponent::loop() {
         break;
       }
 
+      associated_ = true;
       // Start data collection from first sensor
       request_iter_ = sensors_.begin();
       set_next_state_(State::DATA_REQUEST);
@@ -984,7 +1000,7 @@ void NartisWmbusComponent::loop() {
 
     case State::DATA_REQUEST: {
       if (request_iter_ == sensors_.end()) {
-        set_next_state_(State::SEND_RELEASE);
+        set_next_state_(State::PUBLISH);
         break;
       }
 
@@ -1026,12 +1042,14 @@ void NartisWmbusComponent::loop() {
         radio_.stop_rx();
         retry_count_++;
         if (retry_count_ >= MAX_RETRIES) {
-          ESP_LOGW(TAG, "No response for OBIS %s after %d retries", current_obis_.c_str(), MAX_RETRIES);
+          ESP_LOGW(TAG, "No response for OBIS %s after %d retries — meter not responding, possibly displaced",
+                   current_obis_.c_str(), MAX_RETRIES);
           auto range = sensors_.equal_range(current_obis_);
           for (auto it = range.first; it != range.second; ++it) {
             it->second->record_failure();
           }
-          set_next_state_(State::DATA_NEXT);
+          associated_ = false;
+          set_next_state_(State::PUBLISH);
         } else {
           ESP_LOGD(TAG, "Response timeout, retry %d/%d", retry_count_, MAX_RETRIES);
           set_next_state_(State::DATA_REQUEST);
@@ -1063,6 +1081,10 @@ void NartisWmbusComponent::loop() {
       std::string text_value;
       bool is_text = false;
       if (parse_get_response_(apdu_buf_, len, value, text_value, is_text)) {
+        if (!associated_) {
+          ESP_LOGI(TAG, "Meter responding again — association restored");
+          associated_ = true;
+        }
         if (is_text) {
           ESP_LOGD(TAG, "OBIS %s = \"%s\"", current_obis_.c_str(), text_value.c_str());
         } else {
@@ -1103,46 +1125,10 @@ void NartisWmbusComponent::loop() {
       }
 
       if (request_iter_ == sensors_.end()) {
-        set_next_state_(State::SEND_RELEASE);
+        set_next_state_(State::PUBLISH);
       } else {
         set_next_state_(State::DATA_REQUEST);
       }
-      break;
-    }
-
-    case State::SEND_RELEASE: {
-      ESP_LOGD(TAG, "Sending RLRQ");
-      transmit_dlms_(RLRQ_TEMPLATE, sizeof(RLRQ_TEMPLATE), WMBUS_C_SND_NR, true);
-
-      if (!radio_.start_rx(channel_)) {
-        // Can't RX — just finish up
-    
-        set_next_state_(State::PUBLISH);
-        break;
-      }
-      start_timeout_(RELEASE_TIMEOUT_MS);
-      set_next_state_(State::WAIT_RELEASE);
-      break;
-    }
-
-    case State::WAIT_RELEASE: {
-      // Non-blocking: poll for RLRE, but don't care if it times out
-      if (check_timeout_()) {
-        radio_.stop_rx();
-    
-        set_next_state_(State::PUBLISH);
-        break;
-      }
-
-      uint8_t rf_buf[MAX_FRAME_SIZE];
-      int16_t rf_len = radio_.check_rx(rf_buf, sizeof(rf_buf));
-      if (rf_len == 0)
-        break;  // nothing yet — return to loop()
-
-      // Got something (RLRE or whatever) — done
-      radio_.stop_rx();
-  
-      set_next_state_(State::PUBLISH);
       break;
     }
 
