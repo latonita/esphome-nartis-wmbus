@@ -105,36 +105,36 @@ void CMT2300A::write_config_(const uint8_t *config, uint8_t channel) {
   uint8_t tmp;
 
   // Pre-config: firmware function 0x13FEA does these before writing banks:
-  // RMW on CUS_MODE_STA (0x61): clear bit 5, set bit 4
-  tmp = read_reg(CMT_REG_MODE_STA);
-  write_reg(CMT_REG_MODE_STA, (tmp & 0xDF) | 0x10);
-  // RMW on undocumented reg 0x62: set bit 5
-  tmp = read_reg(0x62);
-  write_reg(0x62, tmp | 0x20);
+  // RMW on CUS_MODE_STA: clear RSTN_IN_EN, set CFG_RETAIN
+  tmp = read_reg(CMT2300A_CUS_MODE_STA);
+  write_reg(CMT2300A_CUS_MODE_STA, (tmp & ~CMT2300A_MASK_RSTN_IN_EN) | CMT2300A_MASK_CFG_RETAIN);
+  // RMW on CUS_EN_CTL: set ERROR_STOP_EN
+  tmp = read_reg(CMT2300A_CUS_EN_CTL);
+  write_reg(CMT2300A_CUS_EN_CTL, tmp | CMT2300A_MASK_ERROR_STOP_EN);
 
   // Write 6 register banks in order
-  write_bank(0x00, &config[offset], CMT_BANK_CUS_CMT);
+  write_bank(CMT2300A_CMT_BANK_ADDR, &config[offset], CMT_BANK_CUS_CMT);
   offset += CMT_BANK_CUS_CMT;
 
-  write_bank(0x0C, &config[offset], CMT_BANK_CUS_SYS);
+  write_bank(CMT2300A_SYSTEM_BANK_ADDR, &config[offset], CMT_BANK_CUS_SYS);
   offset += CMT_BANK_CUS_SYS;
 
   // Use channel table for CUS_FREQ instead of default from config
-  write_bank(0x18, CMT2300A_FREQ_CHANNELS[ch], CMT_BANK_CUS_FREQ);
+  write_bank(CMT2300A_FREQUENCY_BANK_ADDR, CMT2300A_FREQ_CHANNELS[ch], CMT_BANK_CUS_FREQ);
   offset += CMT_BANK_CUS_FREQ;
 
-  write_bank(0x20, &config[offset], CMT_BANK_CUS_DATA_RATE);
+  write_bank(CMT2300A_DATA_RATE_BANK_ADDR, &config[offset], CMT_BANK_CUS_DATA_RATE);
   offset += CMT_BANK_CUS_DATA_RATE;
 
-  write_bank(0x38, &config[offset], CMT_BANK_CUS_BASEBAND);
+  write_bank(CMT2300A_BASEBAND_BANK_ADDR, &config[offset], CMT_BANK_CUS_BASEBAND);
   offset += CMT_BANK_CUS_BASEBAND;
 
-  write_bank(0x55, &config[offset], CMT_BANK_CUS_TX);
+  write_bank(CMT2300A_TX_BANK_ADDR, &config[offset], CMT_BANK_CUS_TX);
 
-  // Post-bank fixup: CUS_CMT10 (0x09) — clear bits 2:0, set bit 1
+  // Post-bank fixup: CUS_CMT10 — clear bits 2:0, set bit 1
   // Firmware does this at end of both TX and RX config functions
-  tmp = read_reg(0x09);
-  write_reg(0x09, (tmp & 0xF8) | 0x02);
+  tmp = read_reg(CMT2300A_CUS_CMT10);
+  write_reg(CMT2300A_CUS_CMT10, (tmp & 0xF8) | 0x02);
 
   // Apply post-config fixups (firmware function 0x13666)
   apply_fixups_();
@@ -147,53 +147,56 @@ void CMT2300A::apply_fixups_() {
 
   uint8_t tmp;
 
-  // 1: CUS_IO_SEL (0x65) = 0x20 — GPIO pin mode: GPIO2=INT1, GPIO3=INT2, GPIO1=DOUT/DIN
-  write_reg(CMT_REG_IO_SEL, 0x20);
+  // 1: CUS_IO_SEL — GPIO pin mode: GPIO2=INT1, GPIO3=INT2, GPIO1=DOUT/DIN
+  write_reg(CMT2300A_CUS_IO_SEL, CMT2300A_GPIO3_SEL_INT2 | CMT2300A_GPIO2_SEL_INT1);
 
-  // 2: CUS_INT2_CTL (0x67) — preserve top 3 bits, set INT2_SEL = 0x0C (RX_FIFO_TH)
-  tmp = read_reg(CMT_REG_INT2_CTL);
-  write_reg(CMT_REG_INT2_CTL, (tmp & 0xE0) | 0x0C);
+  // 2: CUS_INT2_CTL — preserve top 3 bits, set INT2_SEL = RX_FIFO_TH
+  tmp = read_reg(CMT2300A_CUS_INT2_CTL);
+  write_reg(CMT2300A_CUS_INT2_CTL, (tmp & 0xE0) | CMT2300A_INT_SEL_RX_FIFO_TH);
 
-  // 3: CUS_INT_EN (0x68) = 0x39 — enable TX_DONE, SYNC_OK, CRC_OK, PKT_DONE
-  write_reg(CMT_REG_INT_ENABLE, 0x39);
+  // 3: CUS_INT_EN = TX_DONE + PREAM_OK + SYNC_OK + PKT_DONE
+  write_reg(CMT2300A_CUS_INT_EN,
+            CMT2300A_MASK_TX_DONE_EN | CMT2300A_MASK_PREAM_OK_EN |
+            CMT2300A_MASK_SYNC_OK_EN | CMT2300A_MASK_PKT_DONE_EN);
 
-  // 4: CUS_SYS2 (0x0D) — clear bits 7:5 (disable LFOSC calibration timers)
-  tmp = read_reg(0x0D);
-  write_reg(0x0D, tmp & 0x1F);
+  // 4: CUS_SYS2 — clear bits 7:5 (disable LFOSC calibration timers)
+  tmp = read_reg(CMT2300A_CUS_SYS2);
+  write_reg(CMT2300A_CUS_SYS2, tmp & ~(CMT2300A_MASK_LFOSC_RECAL_EN |
+            CMT2300A_MASK_LFOSC_CAL1_EN | CMT2300A_MASK_LFOSC_CAL2_EN));
 
-  // 5: CUS_FIFO_CTL (0x69) — set bit 1 (FIFO_MERGE_EN: merge TX+RX → 64 bytes)
-  tmp = read_reg(0x69);
-  write_reg(0x69, tmp | 0x02);
+  // 5: CUS_FIFO_CTL — set FIFO_MERGE_EN (merge TX+RX → 64 bytes)
+  tmp = read_reg(CMT2300A_CUS_FIFO_CTL);
+  write_reg(CMT2300A_CUS_FIFO_CTL, tmp | CMT2300A_MASK_FIFO_MERGE_EN);
 
-  // 6: CUS_PKT29 (0x54) — preserve bit 7, set FIFO threshold to 15
-  tmp = read_reg(0x54);
-  write_reg(0x54, (tmp & 0x80) | 0x0F);
+  // 6: CUS_PKT29 — preserve FIFO_AUTO_RES_EN, set FIFO threshold to 15
+  tmp = read_reg(CMT2300A_CUS_PKT29);
+  write_reg(CMT2300A_CUS_PKT29, (tmp & CMT2300A_MASK_FIFO_AUTO_RES_EN) | 0x0F);
 
-  // 7: CUS_SYS11 (0x16) — preserve top 3, set low 5 to 0x12 (RSSI config)
-  tmp = read_reg(0x16);
-  write_reg(0x16, (tmp & 0xE0) | 0x12);
+  // 7: CUS_SYS11 — preserve top 3, set low 5 to 0x12 (RSSI config)
+  tmp = read_reg(CMT2300A_CUS_SYS11);
+  write_reg(CMT2300A_CUS_SYS11, (tmp & 0xE0) | 0x12);
 
   // 8a: TX power level=0 — CUS_CMT4 + CUS_TX8/TX9 (PA config)
-  write_reg(0x03, 0x1C);
-  write_reg(0x5C, 0x10);
-  write_reg(0x5D, 0x02);
+  write_reg(CMT2300A_CUS_CMT4, 0x1C);
+  write_reg(CMT2300A_CUS_TX8, 0x10);
+  write_reg(CMT2300A_CUS_TX9, 0x02);
 
-  // 8b: Freq config=0 — CDR/AFC tuning (regs 0x41-0x44 in Baseband Bank)
-  write_reg(0x41, 0x8D);
-  write_reg(0x42, 0xF6);
-  write_reg(0x43, 0x55);
-  write_reg(0x44, 0x55);
+  // 8b: Freq config=0 — CDR/AFC tuning (PKT10-PKT13 in Baseband Bank)
+  write_reg(CMT2300A_CUS_PKT10, 0x8D);
+  write_reg(CMT2300A_CUS_PKT11, 0xF6);
+  write_reg(CMT2300A_CUS_PKT12, 0x55);
+  write_reg(CMT2300A_CUS_PKT13, 0x55);
 
   // 8d: CUS_INT1_CTL — default INT1 source (overridden by start_rx for ISR mode)
-  set_int1_source_(CMT_INT_SEL_TX_FIFO_NMTY);
+  set_int1_source_(CMT2300A_INT_SEL_TX_FIFO_NMTY);
 
-  // Firmware ends fixups by going to SLEEP (0x13D2A: GO_SLEEP=0x10)
+  // Firmware ends fixups by going to SLEEP
   // Caller transitions to needed mode afterward
-  write_reg(CMT_REG_MODE_CTL, CMT_GO_SLEEP);
+  write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_SLEEP);
 }
 
 void CMT2300A::set_int1_source_(uint8_t source) {
-  write_reg(CMT_REG_INT1_CTL, source);
+  write_reg(CMT2300A_CUS_INT1_CTL, source);
 }
 
 // ============================================================================
@@ -203,7 +206,7 @@ void CMT2300A::set_int1_source_(uint8_t source) {
 bool CMT2300A::wait_for_mode_(uint8_t expected_mode, uint32_t timeout_ms) {
   uint32_t start = millis();
   while (millis() - start < timeout_ms) {
-    uint8_t status = read_reg(CMT_REG_MODE_STA) & CMT_STA_MASK;
+    uint8_t status = read_reg(CMT2300A_CUS_MODE_STA) & CMT2300A_MASK_CHIP_MODE_STA;
     if (status == expected_mode)
       return true;
     delayMicroseconds(100);
@@ -214,23 +217,25 @@ bool CMT2300A::wait_for_mode_(uint8_t expected_mode, uint32_t timeout_ms) {
 
 void CMT2300A::clear_interrupts_() {
   // Clear all interrupt flags by writing clear bits
-  // CUS_INT_CLR1 (0x6A): bits 2:0 clear TX_DONE, SL_TMO, RX_TMO
-  write_reg(CMT_REG_INT_CLR1, 0x07);
-  // CUS_INT_CLR2 (0x6B): bits 5:0 clear LBD, PREAM_OK, SYNC_OK, NODE_OK, CRC_OK, PKT_DONE
-  write_reg(CMT_REG_INT_CLR2, 0x3F);
+  // CUS_INT_CLR1: clear TX_DONE, SL_TMO, RX_TMO
+  write_reg(CMT2300A_CUS_INT_CLR1,
+            CMT2300A_MASK_TX_DONE_CLR | CMT2300A_MASK_SL_TMO_CLR | CMT2300A_MASK_RX_TMO_CLR);
+  // CUS_INT_CLR2: clear LBD, PREAM_OK, SYNC_OK, NODE_OK, CRC_OK, PKT_DONE
+  write_reg(CMT2300A_CUS_INT_CLR2,
+            CMT2300A_MASK_LBD_CLR | CMT2300A_MASK_PREAM_OK_CLR | CMT2300A_MASK_SYNC_OK_CLR |
+            CMT2300A_MASK_NODE_OK_CLR | CMT2300A_MASK_CRC_OK_CLR | CMT2300A_MASK_PKT_DONE_CLR);
 }
 
 void CMT2300A::clear_fifo_() {
-  // Per firmware at 0x13E16/0x13E2C: write to CUS_FIFO_CLR (0x6C)
-  // 0x01 = restore RX FIFO, 0x02 = restore TX FIFO
+  // Per firmware at 0x13E16/0x13E2C: write to CUS_FIFO_CLR
   // Write both to clear entire FIFO
-  write_reg(CMT_REG_FIFO_CLR, 0x01);
-  write_reg(CMT_REG_FIFO_CLR, 0x02);
+  write_reg(CMT2300A_CUS_FIFO_CLR, CMT2300A_MASK_FIFO_CLR_TX);
+  write_reg(CMT2300A_CUS_FIFO_CLR, CMT2300A_MASK_FIFO_CLR_RX);
 }
 
 bool CMT2300A::go_standby() {
-  write_reg(CMT_REG_MODE_CTL, CMT_GO_STBY);
-  return wait_for_mode_(CMT_STA_STBY);
+  write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_STBY);
+  return wait_for_mode_(CMT2300A_STA_STBY);
 }
 
 // ============================================================================
@@ -261,15 +266,15 @@ void CMT2300A::receiver_task_(void *arg) {
       ESP_LOGD(TAG, "RX task watchdog — restarting RX");
       radio->clear_interrupts_();
       radio->clear_fifo_();
-      radio->write_reg(CMT_REG_MODE_CTL, CMT_GO_RX);
+      radio->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
       continue;
     }
 
     // ISR fired — read interrupt flags via SPI (safe in task context)
-    uint8_t flags = radio->read_reg(CMT_REG_INT_FLAG);
+    uint8_t flags = radio->read_reg(CMT2300A_CUS_INT_FLAG);
 
-    if (flags & CMT_FLAG_PKT_OK) {
-      uint8_t pkt_len = radio->read_reg(0x3E);
+    if (flags & CMT2300A_MASK_PKT_OK_FLG) {
+      uint8_t pkt_len = radio->read_reg(CMT2300A_CUS_PKT7);
       if (pkt_len > 0 && pkt_len <= CMT_MAX_PKT_SIZE) {
         RxPacket pkt;
         pkt.len = pkt_len;
@@ -287,13 +292,13 @@ void CMT2300A::receiver_task_(void *arg) {
       // Clear and re-enter RX for next packet
       radio->clear_interrupts_();
       radio->clear_fifo_();
-      radio->write_reg(CMT_REG_MODE_CTL, CMT_GO_RX);
+      radio->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
 
-    } else if (flags & CMT_FLAG_PKT_ERR) {
+    } else if (flags & CMT2300A_MASK_PKT_ERR_FLG) {
       ESP_LOGW(TAG, "RX task: CRC error");
       radio->clear_interrupts_();
       radio->clear_fifo_();
-      radio->write_reg(CMT_REG_MODE_CTL, CMT_GO_RX);
+      radio->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
 
     } else {
       // Spurious interrupt — clear and continue
@@ -387,14 +392,14 @@ bool CMT2300A::init(uint8_t channel) {
     pin_gpio1_->pin_mode(gpio::FLAG_INPUT);
   }
 
-  // Soft reset: firmware writes 0xFF to reg 0x7F (soft reset), then go_standby
+  // Soft reset: firmware writes 0xFF to CUS_SOFTRST, then go_standby
   // See firmware function 0x13C7C
-  write_reg(0x7F, 0xFF);
+  write_reg(CMT2300A_CUS_SOFTRST, 0xFF);
   delay(10);
-  write_reg(CMT_REG_MODE_CTL, CMT_GO_STBY);
+  write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_STBY);
   delay(10);
 
-  if (!wait_for_mode_(CMT_STA_STBY, 100)) {
+  if (!wait_for_mode_(CMT2300A_STA_STBY, 100)) {
     ESP_LOGE(TAG, "CMT2300A failed to enter standby mode");
     return false;
   }
@@ -412,7 +417,7 @@ bool CMT2300A::init(uint8_t channel) {
   clear_fifo_();
 
   // Verify chip: read back a known register
-  uint8_t check = read_reg(0x00);
+  uint8_t check = read_reg(CMT2300A_CUS_CMT1);
   if (check == 0xFF || check == 0x00) {
     ESP_LOGE(TAG, "CMT2300A not responding (read 0x%02X from reg 0x00)", check);
     return false;
@@ -474,26 +479,26 @@ bool CMT2300A::send_packet(const uint8_t *data, uint16_t len, uint8_t channel) {
   // Write data to FIFO
   write_fifo(data, len);
 
-  // Set packet length (reg 0x3E stores payload length)
-  write_reg(0x3E, len);
+  // Set packet length (CUS_PKT7 stores payload length)
+  write_reg(CMT2300A_CUS_PKT7, len);
 
   // Go TX
   clear_interrupts_();
-  write_reg(CMT_REG_MODE_CTL, CMT_GO_TX);
+  write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_TX);
 
   // Wait for TX done (poll status, ~100ms max for typical W-MBus frame)
   uint32_t start = millis();
   while (millis() - start < 200) {
     // TX_DONE flag is in CUS_INT_CLR1 (0x6A) bit 3 (read-only)
-    uint8_t clr1 = read_reg(CMT_REG_INT_CLR1);
-    if (clr1 & CMT_CLR1_TX_DONE_FLG) {
+    uint8_t clr1 = read_reg(CMT2300A_CUS_INT_CLR1);
+    if (clr1 & CMT2300A_MASK_TX_DONE_FLG) {
       ESP_LOGD(TAG, "TX complete");
       go_standby();
       return true;
     }
     // Also check mode status — if back to standby, TX is done
-    uint8_t mode = read_reg(CMT_REG_MODE_STA) & CMT_STA_MASK;
-    if (mode == CMT_STA_STBY) {
+    uint8_t mode = read_reg(CMT2300A_CUS_MODE_STA) & CMT2300A_MASK_CHIP_MODE_STA;
+    if (mode == CMT2300A_STA_STBY) {
       ESP_LOGD(TAG, "TX complete (mode=STBY)");
       return true;
     }
@@ -515,15 +520,15 @@ uint16_t CMT2300A::receive_packet(uint8_t *buf, uint16_t max_len, uint32_t timeo
 
   // Enter RX mode
   clear_interrupts_();
-  write_reg(CMT_REG_MODE_CTL, CMT_GO_RX);
+  write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
 
   // Poll for packet received
   uint32_t start = millis();
   while (millis() - start < timeout_ms) {
-    uint8_t flags = read_reg(CMT_REG_INT_FLAG);
-    if (flags & CMT_FLAG_PKT_OK) {
+    uint8_t flags = read_reg(CMT2300A_CUS_INT_FLAG);
+    if (flags & CMT2300A_MASK_PKT_OK_FLG) {
       // Read packet length from FIFO status
-      uint8_t pkt_len = read_reg(0x3E);  // RX payload length register
+      uint8_t pkt_len = read_reg(CMT2300A_CUS_PKT7);  // RX payload length register
       if (pkt_len == 0 || pkt_len > max_len) {
         ESP_LOGW(TAG, "RX bad length: %d", pkt_len);
         go_standby();
@@ -537,12 +542,12 @@ uint16_t CMT2300A::receive_packet(uint8_t *buf, uint16_t max_len, uint32_t timeo
     }
 
     // Check for packet error
-    if (flags & CMT_FLAG_PKT_ERR) {
+    if (flags & CMT2300A_MASK_PKT_ERR_FLG) {
       ESP_LOGW(TAG, "RX packet error");
       clear_interrupts_();
       clear_fifo_();
       // Re-enter RX
-      write_reg(CMT_REG_MODE_CTL, CMT_GO_RX);
+      write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
     }
 
     delay(1);
@@ -562,11 +567,11 @@ bool CMT2300A::start_rx(uint8_t channel) {
 
   // Configure INT1 for PKT_DONE (fires on both OK and error packets)
   if (isr_enabled_) {
-    set_int1_source_(CMT_INT_SEL_PKT_DONE);
+    set_int1_source_(CMT2300A_INT_SEL_PKT_DONE);
   }
 
   clear_interrupts_();
-  write_reg(CMT_REG_MODE_CTL, CMT_GO_RX);
+  write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
   rx_active_ = true;
 
 #ifdef USE_ESP32
@@ -592,7 +597,7 @@ void CMT2300A::stop_rx() {
 
   // Restore INT1 source to default (TX_FIFO_NMTY)
   if (isr_enabled_) {
-    set_int1_source_(CMT_INT_SEL_TX_FIFO_NMTY);
+    set_int1_source_(CMT2300A_INT_SEL_TX_FIFO_NMTY);
   }
 
   go_standby();
@@ -600,10 +605,10 @@ void CMT2300A::stop_rx() {
 
 // Polling fallback: read interrupt flags via SPI each call (~50μs)
 int16_t CMT2300A::check_rx_polling_(uint8_t *buf, uint16_t max_len) {
-  uint8_t flags = read_reg(CMT_REG_INT_FLAG);
+  uint8_t flags = read_reg(CMT2300A_CUS_INT_FLAG);
 
-  if (flags & CMT_FLAG_PKT_OK) {
-    uint8_t pkt_len = read_reg(0x3E);
+  if (flags & CMT2300A_MASK_PKT_OK_FLG) {
+    uint8_t pkt_len = read_reg(CMT2300A_CUS_PKT7);
     if (pkt_len == 0 || pkt_len > max_len) {
       ESP_LOGW(TAG, "RX bad length: %d", pkt_len);
       return -1;
@@ -613,11 +618,11 @@ int16_t CMT2300A::check_rx_polling_(uint8_t *buf, uint16_t max_len) {
     return pkt_len;
   }
 
-  if (flags & CMT_FLAG_PKT_ERR) {
+  if (flags & CMT2300A_MASK_PKT_ERR_FLG) {
     ESP_LOGW(TAG, "RX packet error");
     clear_interrupts_();
     clear_fifo_();
-    write_reg(CMT_REG_MODE_CTL, CMT_GO_RX);  // re-enter RX
+    write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);  // re-enter RX
   }
 
   return 0;  // nothing yet
