@@ -1,4 +1,4 @@
-[\[Русская версия\]](README.md)
+# Компонент экспериментальный и на реальных устройствах не тестировался 🙈 😂 Ищу 
 
 [СПОДЭС/DLMS/COSEM](https://github.com/latonita/esphome-dlms-cosem) •
 [МЭК-61107/IEC-61107](https://github.com/latonita/esphome-iec61107-meter) •
@@ -13,7 +13,7 @@
 
 # esphome-nartis-wmbus
 
-Подключение ESPHome к счётчикам электроэнергии Нартис по радиоканалу RF 433 МГц. ESP32 + радиомодуль CMT2300A заменяет штатный CIU (Communication Interface Unit) и общается напрямую со счётчиком по протоколу DLMS/COSEM поверх Wireless M-Bus.
+Подключение ESPHome к счётчикам электроэнергии Нартис И300, И100 по радиоканалу RF 433 МГц. ESP32 + радиомодуль CMT2300A заменяет штатный CIU (Communication Interface Unit) и общается напрямую со счётчиком по протоколу DLMS/COSEM поверх Wireless M-Bus.
 
 Три режима работы:
 - **session** — активный опрос счётчика (AARQ → GET-запросы → RLRQ)
