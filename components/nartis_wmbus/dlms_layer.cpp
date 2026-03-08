@@ -464,6 +464,10 @@ uint16_t dlms_decrypt(const char *log_tag, const std::array<uint8_t, 16> &key, c
       uint16_t hdr_len = dlms_gzip_strip_header(log_tag, &enc_payload[pos], plain_len);
       if (hdr_len == 0)
         return 0;
+      if (plain_len < hdr_len + 8) {
+        ESP_LOGW(log_tag, "Compressed payload too short for gzip trailer: len=%u hdr=%u", plain_len, hdr_len);
+        return 0;
+      }
       uint16_t deflate_len = plain_len - hdr_len - 8;  // strip gzip trailer (CRC32 + ISIZE)
       return dlms_inflate(log_tag, &enc_payload[pos + hdr_len], deflate_len, apdu_out, MAX_APDU_DECOMPRESSED);
     }
@@ -508,25 +512,20 @@ uint16_t dlms_decrypt(const char *log_tag, const std::array<uint8_t, 16> &key, c
       return 0;
 
     // Raw DEFLATE sits between gzip header and 8-byte trailer (CRC32 + ISIZE)
-    uint16_t deflate_len = cipher_len - hdr_len;
-    if (deflate_len > 8)
-      deflate_len -= 8;  // strip gzip trailer
-
-    // Need a temp buffer — can't inflate in-place
-    uint8_t *decomp_buf = static_cast<uint8_t *>(malloc(MAX_APDU_DECOMPRESSED));
-    if (decomp_buf == nullptr) {
-      ESP_LOGE(log_tag, "Failed to allocate decompression buffer");
+    if (cipher_len < hdr_len + 8) {
+      ESP_LOGW(log_tag, "Decrypted payload too short for gzip trailer: len=%u hdr=%u", cipher_len, hdr_len);
       return 0;
     }
+    uint16_t deflate_len = cipher_len - hdr_len - 8;
+
+    // Need a temp buffer — can't inflate in-place (static to avoid heap fragmentation on ESP32)
+    static uint8_t decomp_buf[MAX_APDU_DECOMPRESSED];
 
     uint16_t decomp_len = dlms_inflate(log_tag, &apdu_out[hdr_len], deflate_len, decomp_buf, MAX_APDU_DECOMPRESSED);
-    if (decomp_len == 0) {
-      free(decomp_buf);
+    if (decomp_len == 0)
       return 0;
-    }
 
     memcpy(apdu_out, decomp_buf, decomp_len);
-    free(decomp_buf);
 
     ESP_LOGD(log_tag, "Decompressed %d -> %d bytes", cipher_len, decomp_len);
     return decomp_len;
