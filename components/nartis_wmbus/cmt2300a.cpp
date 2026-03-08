@@ -154,14 +154,13 @@ void CMT2300A::apply_fixups_() {
   this->write_reg(CMT2300A_CUS_INT2_CTL, (tmp & 0xE0) | CMT2300A_INT_SEL_RX_FIFO_TH);
 
   // 3: CUS_INT_EN = TX_DONE + PREAM_OK + SYNC_OK + PKT_DONE
-  this->write_reg(CMT2300A_CUS_INT_EN,
-            CMT2300A_MASK_TX_DONE_EN | CMT2300A_MASK_PREAM_OK_EN |
-            CMT2300A_MASK_SYNC_OK_EN | CMT2300A_MASK_PKT_DONE_EN);
+  this->write_reg(CMT2300A_CUS_INT_EN, CMT2300A_MASK_TX_DONE_EN | CMT2300A_MASK_PREAM_OK_EN | CMT2300A_MASK_SYNC_OK_EN |
+                                           CMT2300A_MASK_PKT_DONE_EN);
 
   // 4: CUS_SYS2 — clear bits 7:5 (disable LFOSC calibration timers)
   tmp = this->read_reg(CMT2300A_CUS_SYS2);
-  this->write_reg(CMT2300A_CUS_SYS2, tmp & ~(CMT2300A_MASK_LFOSC_RECAL_EN |
-            CMT2300A_MASK_LFOSC_CAL1_EN | CMT2300A_MASK_LFOSC_CAL2_EN));
+  this->write_reg(CMT2300A_CUS_SYS2,
+                  tmp & ~(CMT2300A_MASK_LFOSC_RECAL_EN | CMT2300A_MASK_LFOSC_CAL1_EN | CMT2300A_MASK_LFOSC_CAL2_EN));
 
   // 5: CUS_FIFO_CTL — set FIFO_MERGE_EN (merge TX+RX → 64 bytes)
   tmp = this->read_reg(CMT2300A_CUS_FIFO_CTL);
@@ -194,9 +193,7 @@ void CMT2300A::apply_fixups_() {
   this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_SLEEP);
 }
 
-void CMT2300A::set_int1_source_(uint8_t source) {
-  this->write_reg(CMT2300A_CUS_INT1_CTL, source);
-}
+void CMT2300A::set_int1_source_(uint8_t source) { this->write_reg(CMT2300A_CUS_INT1_CTL, source); }
 
 // ============================================================================
 // Mode Control
@@ -218,11 +215,11 @@ void CMT2300A::clear_interrupts_() {
   // Clear all interrupt flags by writing clear bits
   // CUS_INT_CLR1: clear TX_DONE, SL_TMO, RX_TMO
   this->write_reg(CMT2300A_CUS_INT_CLR1,
-            CMT2300A_MASK_TX_DONE_CLR | CMT2300A_MASK_SL_TMO_CLR | CMT2300A_MASK_RX_TMO_CLR);
+                  CMT2300A_MASK_TX_DONE_CLR | CMT2300A_MASK_SL_TMO_CLR | CMT2300A_MASK_RX_TMO_CLR);
   // CUS_INT_CLR2: clear LBD, PREAM_OK, SYNC_OK, NODE_OK, CRC_OK, PKT_DONE
-  this->write_reg(CMT2300A_CUS_INT_CLR2,
-            CMT2300A_MASK_LBD_CLR | CMT2300A_MASK_PREAM_OK_CLR | CMT2300A_MASK_SYNC_OK_CLR |
-            CMT2300A_MASK_NODE_OK_CLR | CMT2300A_MASK_CRC_OK_CLR | CMT2300A_MASK_PKT_DONE_CLR);
+  this->write_reg(CMT2300A_CUS_INT_CLR2, CMT2300A_MASK_LBD_CLR | CMT2300A_MASK_PREAM_OK_CLR |
+                                             CMT2300A_MASK_SYNC_OK_CLR | CMT2300A_MASK_NODE_OK_CLR |
+                                             CMT2300A_MASK_CRC_OK_CLR | CMT2300A_MASK_PKT_DONE_CLR);
 }
 
 void CMT2300A::clear_fifo_() {
@@ -318,8 +315,7 @@ bool CMT2300A::init_isr_() {
   }
 
   // Create receiver task (3KB stack, priority 2 — above idle, below WiFi)
-  BaseType_t ret = xTaskCreatePinnedToCore(
-      receiver_task_, "cmt_rx", 3 * 1024, this, 2, &this->rx_task_handle_, 1);
+  BaseType_t ret = xTaskCreatePinnedToCore(receiver_task_, "cmt_rx", 3 * 1024, this, 2, &this->rx_task_handle_, 1);
   if (ret != pdPASS) {
     ESP_LOGE(TAG, "Failed to create RX task");
     vQueueDelete(this->rx_queue_);
@@ -577,7 +573,8 @@ bool CMT2300A::start_rx(uint8_t channel) {
   // Drain any stale packets from queue
   if (this->isr_enabled_ && this->rx_queue_ != nullptr) {
     RxPacket discard;
-    while (xQueueReceive(this->rx_queue_, &discard, 0) == pdTRUE) {}
+    while (xQueueReceive(this->rx_queue_, &discard, 0) == pdTRUE) {
+    }
   }
 #endif
 

@@ -36,13 +36,15 @@ class NartisWmbusSensorBase {
     uint16_t val = 0;
     for (char c : this->obis_code_) {
       if (c == '.') {
-        if (idx < 6) out[idx++] = static_cast<uint8_t>(val);
+        if (idx < 6)
+          out[idx++] = static_cast<uint8_t>(val);
         val = 0;
       } else if (c >= '0' && c <= '9') {
         val = val * 10 + (c - '0');
       }
     }
-    if (idx < 6) out[idx] = static_cast<uint8_t>(val);
+    if (idx < 6)
+      out[idx] = static_cast<uint8_t>(val);
   }
 
   void reset() {

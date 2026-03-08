@@ -22,44 +22,31 @@ static const char *const TAG = "nartis_wmbus";
 // ============================================================================
 
 static const uint16_t CRC16_EN13757_TABLE[256] = {
-    0x0000, 0x3D65, 0x7ACA, 0x47AF, 0xF594, 0xC8F1, 0x8F5E, 0xB23B,
-    0xD64D, 0xEB28, 0xAC87, 0x91E2, 0x23D9, 0x1EBC, 0x5913, 0x6476,
-    0x91FF, 0xAC9A, 0xEB35, 0xD650, 0x646B, 0x590E, 0x1EA1, 0x23C4,
-    0x47B2, 0x7AD7, 0x3D78, 0x001D, 0xB226, 0x8F43, 0xC8EC, 0xF589,
-    0x1E9B, 0x23FE, 0x6451, 0x5934, 0xEB0F, 0xD66A, 0x91C5, 0xACA0,
-    0xC8D6, 0xF5B3, 0xB21C, 0x8F79, 0x3D42, 0x0027, 0x4788, 0x7AED,
-    0x8F64, 0xB201, 0xF5AE, 0xC8CB, 0x7AF0, 0x4795, 0x003A, 0x3D5F,
-    0x5929, 0x644C, 0x23E3, 0x1E86, 0xACBD, 0x91D8, 0xD677, 0xEB12,
-    0x3D36, 0x0053, 0x47FC, 0x7A99, 0xC8A2, 0xF5C7, 0xB268, 0x8F0D,
-    0xEB7B, 0xD61E, 0x91B1, 0xACD4, 0x1EEF, 0x238A, 0x6425, 0x5940,
-    0xACC9, 0x91AC, 0xD603, 0xEB66, 0x595D, 0x6438, 0x2397, 0x1EF2,
-    0x7A84, 0x47E1, 0x004E, 0x3D2B, 0x8F10, 0xB275, 0xF5DA, 0xC8BF,
-    0x23AD, 0x1EC8, 0x5967, 0x6402, 0xD639, 0xEB5C, 0xACF3, 0x9196,
-    0xF5E0, 0xC885, 0x8F2A, 0xB24F, 0x0074, 0x3D11, 0x7ABE, 0x47DB,
-    0xB252, 0x8F37, 0xC898, 0xF5FD, 0x47C6, 0x7AA3, 0x3D0C, 0x0069,
-    0x641F, 0x597A, 0x1ED5, 0x23B0, 0x918B, 0xACEE, 0xEB41, 0xD624,
-    0x7A6C, 0x4709, 0x00A6, 0x3DC3, 0x8FF8, 0xB29D, 0xF532, 0xC857,
-    0xAC21, 0x9144, 0xD6EB, 0xEB8E, 0x59B5, 0x64D0, 0x237F, 0x1E1A,
-    0xEB93, 0xD6F6, 0x9159, 0xAC3C, 0x1E07, 0x2362, 0x64CD, 0x59A8,
-    0x3DDE, 0x00BB, 0x4714, 0x7A71, 0xC84A, 0xF52F, 0xB280, 0x8FE5,
-    0x64F7, 0x5992, 0x1E3D, 0x2358, 0x9163, 0xAC06, 0xEBA9, 0xD6CC,
-    0xB2BA, 0x8FDF, 0xC870, 0xF515, 0x472E, 0x7A4B, 0x3DE4, 0x0081,
-    0xF508, 0xC86D, 0x8FC2, 0xB2A7, 0x009C, 0x3DF9, 0x7A56, 0x4733,
-    0x2345, 0x1E20, 0x598F, 0x64EA, 0xD6D1, 0xEBB4, 0xAC1B, 0x917E,
-    0x475A, 0x7A3F, 0x3D90, 0x00F5, 0xB2CE, 0x8FAB, 0xC804, 0xF561,
-    0x9117, 0xAC72, 0xEBDD, 0xD6B8, 0x6483, 0x59E6, 0x1E49, 0x232C,
-    0xD6A5, 0xEBC0, 0xAC6F, 0x910A, 0x2331, 0x1E54, 0x59FB, 0x649E,
-    0x00E8, 0x3D8D, 0x7A22, 0x4747, 0xF57C, 0xC819, 0x8FB6, 0xB2D3,
-    0x59C1, 0x64A4, 0x230B, 0x1E6E, 0xAC55, 0x9130, 0xD69F, 0xEBFA,
-    0x8F8C, 0xB2E9, 0xF546, 0xC823, 0x7A18, 0x477D, 0x00D2, 0x3DB7,
-    0xC83E, 0xF55B, 0xB2F4, 0x8F91, 0x3DAA, 0x00CF, 0x4760, 0x7A05,
-    0x1E73, 0x2316, 0x64B9, 0x59DC, 0xEBE7, 0xD682, 0x912D, 0xAC48,
+    0x0000, 0x3D65, 0x7ACA, 0x47AF, 0xF594, 0xC8F1, 0x8F5E, 0xB23B, 0xD64D, 0xEB28, 0xAC87, 0x91E2, 0x23D9, 0x1EBC,
+    0x5913, 0x6476, 0x91FF, 0xAC9A, 0xEB35, 0xD650, 0x646B, 0x590E, 0x1EA1, 0x23C4, 0x47B2, 0x7AD7, 0x3D78, 0x001D,
+    0xB226, 0x8F43, 0xC8EC, 0xF589, 0x1E9B, 0x23FE, 0x6451, 0x5934, 0xEB0F, 0xD66A, 0x91C5, 0xACA0, 0xC8D6, 0xF5B3,
+    0xB21C, 0x8F79, 0x3D42, 0x0027, 0x4788, 0x7AED, 0x8F64, 0xB201, 0xF5AE, 0xC8CB, 0x7AF0, 0x4795, 0x003A, 0x3D5F,
+    0x5929, 0x644C, 0x23E3, 0x1E86, 0xACBD, 0x91D8, 0xD677, 0xEB12, 0x3D36, 0x0053, 0x47FC, 0x7A99, 0xC8A2, 0xF5C7,
+    0xB268, 0x8F0D, 0xEB7B, 0xD61E, 0x91B1, 0xACD4, 0x1EEF, 0x238A, 0x6425, 0x5940, 0xACC9, 0x91AC, 0xD603, 0xEB66,
+    0x595D, 0x6438, 0x2397, 0x1EF2, 0x7A84, 0x47E1, 0x004E, 0x3D2B, 0x8F10, 0xB275, 0xF5DA, 0xC8BF, 0x23AD, 0x1EC8,
+    0x5967, 0x6402, 0xD639, 0xEB5C, 0xACF3, 0x9196, 0xF5E0, 0xC885, 0x8F2A, 0xB24F, 0x0074, 0x3D11, 0x7ABE, 0x47DB,
+    0xB252, 0x8F37, 0xC898, 0xF5FD, 0x47C6, 0x7AA3, 0x3D0C, 0x0069, 0x641F, 0x597A, 0x1ED5, 0x23B0, 0x918B, 0xACEE,
+    0xEB41, 0xD624, 0x7A6C, 0x4709, 0x00A6, 0x3DC3, 0x8FF8, 0xB29D, 0xF532, 0xC857, 0xAC21, 0x9144, 0xD6EB, 0xEB8E,
+    0x59B5, 0x64D0, 0x237F, 0x1E1A, 0xEB93, 0xD6F6, 0x9159, 0xAC3C, 0x1E07, 0x2362, 0x64CD, 0x59A8, 0x3DDE, 0x00BB,
+    0x4714, 0x7A71, 0xC84A, 0xF52F, 0xB280, 0x8FE5, 0x64F7, 0x5992, 0x1E3D, 0x2358, 0x9163, 0xAC06, 0xEBA9, 0xD6CC,
+    0xB2BA, 0x8FDF, 0xC870, 0xF515, 0x472E, 0x7A4B, 0x3DE4, 0x0081, 0xF508, 0xC86D, 0x8FC2, 0xB2A7, 0x009C, 0x3DF9,
+    0x7A56, 0x4733, 0x2345, 0x1E20, 0x598F, 0x64EA, 0xD6D1, 0xEBB4, 0xAC1B, 0x917E, 0x475A, 0x7A3F, 0x3D90, 0x00F5,
+    0xB2CE, 0x8FAB, 0xC804, 0xF561, 0x9117, 0xAC72, 0xEBDD, 0xD6B8, 0x6483, 0x59E6, 0x1E49, 0x232C, 0xD6A5, 0xEBC0,
+    0xAC6F, 0x910A, 0x2331, 0x1E54, 0x59FB, 0x649E, 0x00E8, 0x3D8D, 0x7A22, 0x4747, 0xF57C, 0xC819, 0x8FB6, 0xB2D3,
+    0x59C1, 0x64A4, 0x230B, 0x1E6E, 0xAC55, 0x9130, 0xD69F, 0xEBFA, 0x8F8C, 0xB2E9, 0xF546, 0xC823, 0x7A18, 0x477D,
+    0x00D2, 0x3DB7, 0xC83E, 0xF55B, 0xB2F4, 0x8F91, 0x3DAA, 0x00CF, 0x4760, 0x7A05, 0x1E73, 0x2316, 0x64B9, 0x59DC,
+    0xEBE7, 0xD682, 0x912D, 0xAC48,
 };
 
 uint16_t NartisWmbusComponent::crc16_en13757(const uint8_t *data, uint16_t len) {
   uint16_t crc = 0x0000;
   for (uint16_t i = 0; i < len; i++) {
-    uint8_t idx = (uint8_t)(crc >> 8) ^ data[i];
+    uint8_t idx = (uint8_t) (crc >> 8) ^ data[i];
     crc = (crc << 8) ^ CRC16_EN13757_TABLE[idx];
   }
   return ~crc & 0xFFFF;
@@ -73,9 +60,8 @@ uint16_t NartisWmbusComponent::crc16_en13757(const uint8_t *data, uint16_t len) 
 //   Payload: [SC + pad + IC(4,BE) + ciphertext] or [plaintext APDU]
 // ============================================================================
 
-uint16_t NartisWmbusComponent::wmbus_frame_build_(uint8_t c_field, uint8_t ci_field,
-                                                    const uint8_t *payload, uint16_t pay_len,
-                                                    uint8_t *out) {
+uint16_t NartisWmbusComponent::wmbus_frame_build_(uint8_t c_field, uint8_t ci_field, const uint8_t *payload,
+                                                  uint16_t pay_len, uint8_t *out) {
   uint8_t raw[MAX_APDU_SIZE + 30];
   uint16_t raw_len = 0;
 
@@ -95,14 +81,14 @@ uint16_t NartisWmbusComponent::wmbus_frame_build_(uint8_t c_field, uint8_t ci_fi
   raw[raw_len++] = OUR_VERSION;
   raw[raw_len++] = OUR_DEVICE_TYPE;
 
-  // CI-field — always 0x7A (TPL short header) per firmware
-  raw[raw_len++] = 0x7A;
+  // CI-field — always TPL short header per firmware
+  raw[raw_len++] = WMBUS_CI_TPL_SHORT;
 
   // TPL short header (4 bytes) — firmware buf[0x0B..0x0E]
-  raw[raw_len++] = c_field;      // C-field copy
-  raw[raw_len++] = 0x7A;         // CI-field copy (always 0x7A)
-  raw[raw_len++] = this->access_nr_;   // Access number
-  raw[raw_len++] = 0x00;         // Status byte
+  raw[raw_len++] = c_field;             // C-field copy
+  raw[raw_len++] = WMBUS_CI_TPL_SHORT;  // CI-field copy
+  raw[raw_len++] = this->access_nr_;    // Access number
+  raw[raw_len++] = 0x00;                // Status byte
 
   // Payload (encrypted SC+pad+IC+ciphertext, or plain APDU)
   memcpy(&raw[raw_len], payload, pay_len);
@@ -151,8 +137,7 @@ uint16_t NartisWmbusComponent::wmbus_frame_build_(uint8_t c_field, uint8_t ci_fi
 // W-MBus Frame Parse (RX) — strip block CRCs
 // ============================================================================
 
-uint16_t NartisWmbusComponent::wmbus_frame_parse_(const uint8_t *frame, uint16_t frame_len,
-                                                    uint8_t *out) {
+uint16_t NartisWmbusComponent::wmbus_frame_parse_(const uint8_t *frame, uint16_t frame_len, uint8_t *out) {
   uint16_t in_pos = 0;
   uint16_t out_len = 0;
 
@@ -202,12 +187,9 @@ uint16_t NartisWmbusComponent::wmbus_frame_parse_(const uint8_t *frame, uint16_t
 // AES-128-GCM using mbedtls (ESP32)
 // ============================================================================
 
-bool NartisWmbusComponent::aes_gcm_crypt_(bool encrypt, const uint8_t *key,
-                                            const uint8_t *nonce,
-                                            const uint8_t *aad, uint16_t aad_len,
-                                            const uint8_t *input, uint16_t len,
-                                            uint8_t *output,
-                                            uint8_t *tag_buf, uint8_t tag_len) {
+bool NartisWmbusComponent::aes_gcm_crypt_(bool encrypt, const uint8_t *key, const uint8_t *nonce, const uint8_t *aad,
+                                          uint16_t aad_len, const uint8_t *input, uint16_t len, uint8_t *output,
+                                          uint8_t *tag_buf, uint8_t tag_len) {
   mbedtls_gcm_context gcm_ctx;
   mbedtls_gcm_init(&gcm_ctx);
 
@@ -284,8 +266,7 @@ bool NartisWmbusComponent::aes_gcm_crypt_(bool encrypt, const uint8_t *key,
 // NOTE: TX nonce should use OUR (CIU) system title, not meter's (issue #4)
 // ============================================================================
 
-uint16_t NartisWmbusComponent::wmbus_encrypt_(const uint8_t *dlms_apdu, uint16_t apdu_len,
-                                                uint8_t *out) {
+uint16_t NartisWmbusComponent::wmbus_encrypt_(const uint8_t *dlms_apdu, uint16_t apdu_len, uint8_t *out) {
   uint16_t pos = 0;
 
   // SC byte (Security Control: AES-GCM-128 encrypted)
@@ -331,8 +312,7 @@ uint16_t NartisWmbusComponent::wmbus_encrypt_(const uint8_t *dlms_apdu, uint16_t
 //   Nonce: meter_system_title[8] || IC[4]
 // ============================================================================
 
-uint16_t NartisWmbusComponent::wmbus_decrypt_(const uint8_t *enc_payload, uint16_t enc_len,
-                                                uint8_t *dlms_out) {
+uint16_t NartisWmbusComponent::wmbus_decrypt_(const uint8_t *enc_payload, uint16_t enc_len, uint8_t *dlms_out) {
   // Minimum: SC(1) + pad(1) + IC(4) + at least 1 byte ciphertext
   if (enc_len < 7) {
     ESP_LOGW(TAG, "Encrypted payload too short: %d", enc_len);
@@ -355,10 +335,8 @@ uint16_t NartisWmbusComponent::wmbus_decrypt_(const uint8_t *enc_payload, uint16
   }
 
   // Invocation Counter (4 bytes, big-endian) — firmware buf[0x0F..0x12]
-  uint32_t ic = ((uint32_t) enc_payload[pos] << 24) |
-                ((uint32_t) enc_payload[pos + 1] << 16) |
-                ((uint32_t) enc_payload[pos + 2] << 8) |
-                enc_payload[pos + 3];
+  uint32_t ic = ((uint32_t) enc_payload[pos] << 24) | ((uint32_t) enc_payload[pos + 1] << 16) |
+                ((uint32_t) enc_payload[pos + 2] << 8) | enc_payload[pos + 3];
   pos += 4;
 
   // Build GCM nonce: meter_system_title[8] || IC[4]
@@ -383,8 +361,8 @@ uint16_t NartisWmbusComponent::wmbus_decrypt_(const uint8_t *enc_payload, uint16
   }
 
   // AAD = SC byte only (1 byte) per firmware gcm_decrypt_service (0x1B300)
-  if (!this->aes_gcm_crypt_(false, this->decryption_key_.data(), nonce, &sc, 1,
-                       &enc_payload[pos], cipher_len, dlms_out, tag_ptr, tag_len)) {
+  if (!this->aes_gcm_crypt_(false, this->decryption_key_.data(), nonce, &sc, 1, &enc_payload[pos], cipher_len, dlms_out,
+                            tag_ptr, tag_len)) {
     return 0;
   }
 
@@ -396,8 +374,8 @@ uint16_t NartisWmbusComponent::wmbus_decrypt_(const uint8_t *enc_payload, uint16
 // DLMS APDU Builders
 // ============================================================================
 
-uint16_t NartisWmbusComponent::build_get_request_(const uint8_t obis[6], uint16_t class_id,
-                                                    uint8_t attr, uint8_t *out) {
+uint16_t NartisWmbusComponent::build_get_request_(const uint8_t obis[6], uint16_t class_id, uint8_t attr,
+                                                  uint8_t *out) {
   uint16_t pos = 0;
 
   // GET.request PDU
@@ -423,8 +401,8 @@ uint16_t NartisWmbusComponent::build_get_request_(const uint8_t obis[6], uint16_
 }
 
 bool NartisWmbusComponent::parse_aare_(const uint8_t *data, uint16_t len) {
-  // AARE tag = 0x61
-  if (len < 2 || data[0] != 0x61) {
+  // AARE tag
+  if (len < 2 || data[0] != DLMS_TAG_AARE) {
     ESP_LOGW(TAG, "Not an AARE (tag=0x%02X)", data[0]);
     return false;
   }
@@ -437,11 +415,13 @@ bool NartisWmbusComponent::parse_aare_(const uint8_t *data, uint16_t len) {
 
   while (pos < len) {
     uint8_t tag = data[pos];
-    if (pos + 1 >= len) break;
+    if (pos + 1 >= len)
+      break;
     uint8_t tag_len = data[pos + 1];
     pos += 2;
 
-    if (pos + tag_len > len) break;
+    if (pos + tag_len > len)
+      break;
 
     if (tag == 0xA2) {
       // Association result
@@ -465,15 +445,13 @@ bool NartisWmbusComponent::parse_aare_(const uint8_t *data, uint16_t len) {
         this->system_title_valid_ = true;
         found_system_title = true;
         ESP_LOGI(TAG, "************************************************************");
-        ESP_LOGI(TAG, "  Meter system title: %02X%02X%02X%02X%02X%02X%02X%02X",
-                 this->meter_system_title_[0], this->meter_system_title_[1],
-                 this->meter_system_title_[2], this->meter_system_title_[3],
-                 this->meter_system_title_[4], this->meter_system_title_[5],
-                 this->meter_system_title_[6], this->meter_system_title_[7]);
+        ESP_LOGI(TAG, "  Meter system title: %02X%02X%02X%02X%02X%02X%02X%02X", this->meter_system_title_[0],
+                 this->meter_system_title_[1], this->meter_system_title_[2], this->meter_system_title_[3],
+                 this->meter_system_title_[4], this->meter_system_title_[5], this->meter_system_title_[6],
+                 this->meter_system_title_[7]);
         ESP_LOGI(TAG, "  Add to YAML:  meter_system_title: \"%02X%02X%02X%02X%02X%02X%02X%02X\"",
-                 this->meter_system_title_[0], this->meter_system_title_[1],
-                 this->meter_system_title_[2], this->meter_system_title_[3],
-                 this->meter_system_title_[4], this->meter_system_title_[5],
+                 this->meter_system_title_[0], this->meter_system_title_[1], this->meter_system_title_[2],
+                 this->meter_system_title_[3], this->meter_system_title_[4], this->meter_system_title_[5],
                  this->meter_system_title_[6], this->meter_system_title_[7]);
         ESP_LOGI(TAG, "************************************************************");
       }
@@ -496,40 +474,58 @@ bool NartisWmbusComponent::parse_aare_(const uint8_t *data, uint16_t len) {
 // Decode a single DLMS A-XDR data element (type_tag + value bytes).
 // Returns true on success. Sets is_text=true and fills text_value for string types,
 // otherwise fills numeric value.
-static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint16_t avail,
-                                     float &value, char *text_buf, uint16_t text_buf_size, bool &is_text) {
+static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint16_t avail, float &value,
+                                     char *text_buf, uint16_t text_buf_size, bool &is_text) {
   is_text = false;
 
-  auto be16 = [](const uint8_t *p) -> uint16_t { return (uint16_t)((p[0] << 8) | p[1]); };
+  auto be16 = [](const uint8_t *p) -> uint16_t { return (uint16_t) ((p[0] << 8) | p[1]); };
   auto be32 = [](const uint8_t *p) -> uint32_t {
-    return ((uint32_t) p[0] << 24) | ((uint32_t) p[1] << 16) |
-           ((uint32_t) p[2] << 8) | (uint32_t) p[3];
+    return ((uint32_t) p[0] << 24) | ((uint32_t) p[1] << 16) | ((uint32_t) p[2] << 8) | (uint32_t) p[3];
   };
 
   switch (type_tag) {
     // --- Numeric types (fixed length) ---
     case DLMS_TYPE_UINT8:
-      if (avail >= 1) { value = static_cast<float>(data[0]); return true; }
+      if (avail >= 1) {
+        value = static_cast<float>(data[0]);
+        return true;
+      }
       break;
     case DLMS_TYPE_INT8:
-      if (avail >= 1) { value = static_cast<float>(static_cast<int8_t>(data[0])); return true; }
+      if (avail >= 1) {
+        value = static_cast<float>(static_cast<int8_t>(data[0]));
+        return true;
+      }
       break;
     case DLMS_TYPE_UINT16:
-      if (avail >= 2) { value = static_cast<float>(be16(data)); return true; }
+      if (avail >= 2) {
+        value = static_cast<float>(be16(data));
+        return true;
+      }
       break;
     case DLMS_TYPE_INT16:
-      if (avail >= 2) { value = static_cast<float>(static_cast<int16_t>(be16(data))); return true; }
+      if (avail >= 2) {
+        value = static_cast<float>(static_cast<int16_t>(be16(data)));
+        return true;
+      }
       break;
     case DLMS_TYPE_UINT32:
-      if (avail >= 4) { value = static_cast<float>(be32(data)); return true; }
+      if (avail >= 4) {
+        value = static_cast<float>(be32(data));
+        return true;
+      }
       break;
     case DLMS_TYPE_INT32:
-      if (avail >= 4) { value = static_cast<float>(static_cast<int32_t>(be32(data))); return true; }
+      if (avail >= 4) {
+        value = static_cast<float>(static_cast<int32_t>(be32(data)));
+        return true;
+      }
       break;
     case DLMS_TYPE_UINT64: {
       if (avail >= 8) {
         uint64_t v = 0;
-        for (int i = 0; i < 8; i++) v = (v << 8) | data[i];
+        for (int i = 0; i < 8; i++)
+          v = (v << 8) | data[i];
         value = static_cast<float>(v);
         return true;
       }
@@ -538,7 +534,8 @@ static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint
     case DLMS_TYPE_INT64: {
       if (avail >= 8) {
         uint64_t v = 0;
-        for (int i = 0; i < 8; i++) v = (v << 8) | data[i];
+        for (int i = 0; i < 8; i++)
+          v = (v << 8) | data[i];
         value = static_cast<float>(static_cast<int64_t>(v));
         return true;
       }
@@ -556,7 +553,8 @@ static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint
     case DLMS_TYPE_FLOAT64:
       if (avail >= 8) {
         uint64_t v = 0;
-        for (int i = 0; i < 8; i++) v = (v << 8) | data[i];
+        for (int i = 0; i < 8; i++)
+          v = (v << 8) | data[i];
         double d;
         memcpy(&d, &v, sizeof(double));
         value = static_cast<float>(d);
@@ -565,20 +563,24 @@ static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint
       break;
     case DLMS_TYPE_ENUM:
     case DLMS_TYPE_BOOLEAN:
-      if (avail >= 1) { value = static_cast<float>(data[0]); return true; }
+      if (avail >= 1) {
+        value = static_cast<float>(data[0]);
+        return true;
+      }
       break;
 
     // --- String/octet types (length-prefixed) ---
     case DLMS_TYPE_OCTET_STRING: {
-      if (avail < 1) break;
+      if (avail < 1)
+        break;
       uint8_t slen = data[0];
-      if (avail < 1u + slen) break;
+      if (avail < 1u + slen)
+        break;
       const uint8_t *p = &data[1];
       is_text = true;
       if (slen == 12) {
         // DLMS datetime: YYYY-MM-DD HH:MM:SS
-        snprintf(text_buf, text_buf_size, "%04d-%02d-%02d %02d:%02d:%02d",
-                 be16(p), p[2], p[3], p[5], p[6], p[7]);
+        snprintf(text_buf, text_buf_size, "%04d-%02d-%02d %02d:%02d:%02d", be16(p), p[2], p[3], p[5], p[6], p[7]);
       } else if (slen == 5) {
         // DLMS date: YYYY-MM-DD
         snprintf(text_buf, text_buf_size, "%04d-%02d-%02d", be16(p), p[2], p[3]);
@@ -596,9 +598,11 @@ static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint
     }
     case DLMS_TYPE_VISIBLE_STRING:
     case DLMS_TYPE_UTF8_STRING: {
-      if (avail < 1) break;
+      if (avail < 1)
+        break;
       uint8_t slen = data[0];
-      if (avail < 1u + slen) break;
+      if (avail < 1u + slen)
+        break;
       is_text = true;
       uint8_t copy_len = slen;
       if (copy_len >= text_buf_size)
@@ -615,9 +619,8 @@ static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint
   return false;
 }
 
-bool NartisWmbusComponent::parse_get_response_(const uint8_t *data, uint16_t len,
-                                                float &value, char *text_buf,
-                                                uint16_t text_buf_size, bool &is_text) {
+bool NartisWmbusComponent::parse_get_response_(const uint8_t *data, uint16_t len, float &value, char *text_buf,
+                                               uint16_t text_buf_size, bool &is_text) {
   is_text = false;
 
   if (len < 3 || data[0] != DLMS_TAG_GET_RESPONSE) {
@@ -627,7 +630,8 @@ bool NartisWmbusComponent::parse_get_response_(const uint8_t *data, uint16_t len
 
   // data[1] = response type (0x01 = normal), data[2] = invoke-id
   uint16_t pos = 3;
-  if (pos >= len) return false;
+  if (pos >= len)
+    return false;
 
   // Data-Access-Result or Data
   uint8_t choice = data[pos++];
@@ -641,7 +645,8 @@ bool NartisWmbusComponent::parse_get_response_(const uint8_t *data, uint16_t len
     return false;
   }
 
-  if (pos >= len) return false;
+  if (pos >= len)
+    return false;
   uint8_t type_tag = data[pos++];
 
   if (!dlms_decode_data_element(type_tag, &data[pos], len - pos, value, text_buf, text_buf_size, is_text)) {
@@ -696,7 +701,8 @@ bool NartisWmbusComponent::send_install_frame_() {
   this->access_nr_++;
 
   // Build SND-IR frame with install payload (always unencrypted)
-  uint16_t frame_len = this->wmbus_frame_build_(WMBUS_C_SND_IR, 0x7A, payload, INSTALL_PAYLOAD_SIZE, frame_buf);
+  uint16_t frame_len =
+      this->wmbus_frame_build_(WMBUS_C_SND_IR, WMBUS_CI_TPL_SHORT, payload, INSTALL_PAYLOAD_SIZE, frame_buf);
 
   ESP_LOGD(TAG, "Sending SND-IR install request (%d bytes)", frame_len);
   return this->radio_.send_packet(frame_buf, frame_len, this->channel_);
@@ -706,8 +712,7 @@ bool NartisWmbusComponent::send_install_frame_() {
 // High-level TX/RX
 // ============================================================================
 
-bool NartisWmbusComponent::transmit_dlms_(const uint8_t *apdu, uint16_t apdu_len,
-                                            uint8_t c_field, bool encrypt) {
+bool NartisWmbusComponent::transmit_dlms_(const uint8_t *apdu, uint16_t apdu_len, uint8_t c_field, bool encrypt) {
   uint8_t frame_buf[MAX_FRAME_SIZE];
 
   // Increment access number for each TX (per firmware frame_set_mode 0xBAF4)
@@ -729,8 +734,7 @@ bool NartisWmbusComponent::transmit_dlms_(const uint8_t *apdu, uint16_t apdu_len
 }
 
 // Process raw RF packet into DLMS APDU (pure data, no radio calls)
-uint16_t NartisWmbusComponent::process_rx_frame_(const uint8_t *rf_buf, uint16_t rf_len,
-                                                   uint8_t *dlms_out) {
+uint16_t NartisWmbusComponent::process_rx_frame_(const uint8_t *rf_buf, uint16_t rf_len, uint8_t *dlms_out) {
   // Strip W-MBus CRC blocks
   uint8_t stripped[MAX_APDU_SIZE + 30];
   uint16_t stripped_len = this->wmbus_frame_parse_(rf_buf, rf_len, stripped);
@@ -747,19 +751,18 @@ uint16_t NartisWmbusComponent::process_rx_frame_(const uint8_t *rf_buf, uint16_t
 
   uint8_t ci_field = stripped[10];
 
-  ESP_LOGD(TAG, "RX frame: L=%d C=0x%02X CI=0x%02X total=%d",
-           stripped[0], stripped[1], ci_field, stripped_len);
+  ESP_LOGD(TAG, "RX frame: L=%d C=0x%02X CI=0x%02X total=%d", stripped[0], stripped[1], ci_field, stripped_len);
 
   // After CI, firmware expects TPL short header (4 bytes):
   //   C_copy(1) + CI_copy(1) + access_nr(1) + status(1)
   // Then encrypted block or plaintext DLMS APDU
   // Per firmware frame_parse (0xBF5E): data after DLL+TPL header
-  static constexpr uint16_t DLL_HDR_LEN = 11;  // L+C+M+A+CI
-  static constexpr uint16_t TPL_SHORT_HDR_LEN = 4;  // C_copy+CI_copy+access_nr+status
+  static constexpr uint16_t DLL_HDR_LEN = 11;                                // L+C+M+A+CI
+  static constexpr uint16_t TPL_SHORT_HDR_LEN = 4;                           // C_copy+CI_copy+access_nr+status
   static constexpr uint16_t FULL_HDR_LEN = DLL_HDR_LEN + TPL_SHORT_HDR_LEN;  // 15
 
-  if (ci_field == 0x7A) {
-    // CI=0x7A: TPL short header present
+  if (ci_field == WMBUS_CI_TPL_SHORT) {
+    // TPL short header present
     if (stripped_len < FULL_HDR_LEN) {
       ESP_LOGW(TAG, "Frame too short for TPL header: %d", stripped_len);
       return 0;
@@ -768,8 +771,8 @@ uint16_t NartisWmbusComponent::process_rx_frame_(const uint8_t *rf_buf, uint16_t
     uint8_t *data_after_tpl = &stripped[FULL_HDR_LEN];
     uint16_t data_len = stripped_len - FULL_HDR_LEN;
 
-    ESP_LOGD(TAG, "  TPL: C_copy=0x%02X CI_copy=0x%02X acc=%d status=0x%02X",
-             stripped[11], stripped[12], stripped[13], stripped[14]);
+    ESP_LOGD(TAG, "  TPL: C_copy=0x%02X CI_copy=0x%02X acc=%d status=0x%02X", stripped[11], stripped[12], stripped[13],
+             stripped[14]);
 
     if (data_len == 0)
       return 0;
@@ -853,13 +856,12 @@ void NartisWmbusComponent::setup() {
           memcpy(this->meter_system_title_, this->configured_meter_sys_title_.data(), 8);
           this->system_title_valid_ = true;
           ESP_LOGI(TAG, "Entering LISTEN mode on ch %d (%.3f MHz), meter_sys_title=%02X%02X%02X%02X%02X%02X%02X%02X",
-                   this->channel_, freq,
-                   this->meter_system_title_[0], this->meter_system_title_[1],
-                   this->meter_system_title_[2], this->meter_system_title_[3],
-                   this->meter_system_title_[4], this->meter_system_title_[5],
-                   this->meter_system_title_[6], this->meter_system_title_[7]);
+                   this->channel_, freq, this->meter_system_title_[0], this->meter_system_title_[1],
+                   this->meter_system_title_[2], this->meter_system_title_[3], this->meter_system_title_[4],
+                   this->meter_system_title_[5], this->meter_system_title_[6], this->meter_system_title_[7]);
         } else {
-          ESP_LOGW(TAG, "Entering LISTEN mode on ch %d (%.3f MHz) — no meter_system_title configured, decryption disabled",
+          ESP_LOGW(TAG,
+                   "Entering LISTEN mode on ch %d (%.3f MHz) — no meter_system_title configured, decryption disabled",
                    this->channel_, freq);
         }
         this->state_ = State::LISTENING;
@@ -876,20 +878,20 @@ void NartisWmbusComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "Nartis W-MBus:");
   ESP_LOGCONFIG(TAG, "  Channel: %d (%.3f MHz)", this->channel_,
                 CMT2300A_FREQ_MHZ[this->channel_ < 4 ? this->channel_ : 1]);
-  ESP_LOGCONFIG(TAG, "  AES Key: %02X%02X%02X%02X...%02X%02X%02X%02X",
-                this->decryption_key_[0], this->decryption_key_[1], this->decryption_key_[2], this->decryption_key_[3],
-                this->decryption_key_[12], this->decryption_key_[13], this->decryption_key_[14], this->decryption_key_[15]);
-  ESP_LOGCONFIG(TAG, "  Our System Title: %02X%02X%02X%02X%02X%02X%02X%02X (from MAC)",
-                this->system_title_[0], this->system_title_[1], this->system_title_[2], this->system_title_[3],
-                this->system_title_[4], this->system_title_[5], this->system_title_[6], this->system_title_[7]);
+  ESP_LOGCONFIG(TAG, "  AES Key: %02X%02X%02X%02X...%02X%02X%02X%02X", this->decryption_key_[0],
+                this->decryption_key_[1], this->decryption_key_[2], this->decryption_key_[3], this->decryption_key_[12],
+                this->decryption_key_[13], this->decryption_key_[14], this->decryption_key_[15]);
+  ESP_LOGCONFIG(TAG, "  Our System Title: %02X%02X%02X%02X%02X%02X%02X%02X (from MAC)", this->system_title_[0],
+                this->system_title_[1], this->system_title_[2], this->system_title_[3], this->system_title_[4],
+                this->system_title_[5], this->system_title_[6], this->system_title_[7]);
   if (this->meter_id_[0] != '\0')
     ESP_LOGCONFIG(TAG, "  Meter ID: %s", this->meter_id_);
   if (this->meter_sys_title_configured_)
-    ESP_LOGCONFIG(TAG, "  Meter System Title: %02X%02X%02X%02X%02X%02X%02X%02X",
-                  this->configured_meter_sys_title_[0], this->configured_meter_sys_title_[1],
-                  this->configured_meter_sys_title_[2], this->configured_meter_sys_title_[3],
-                  this->configured_meter_sys_title_[4], this->configured_meter_sys_title_[5],
-                  this->configured_meter_sys_title_[6], this->configured_meter_sys_title_[7]);
+    ESP_LOGCONFIG(TAG, "  Meter System Title: %02X%02X%02X%02X%02X%02X%02X%02X", this->configured_meter_sys_title_[0],
+                  this->configured_meter_sys_title_[1], this->configured_meter_sys_title_[2],
+                  this->configured_meter_sys_title_[3], this->configured_meter_sys_title_[4],
+                  this->configured_meter_sys_title_[5], this->configured_meter_sys_title_[6],
+                  this->configured_meter_sys_title_[7]);
   else
     ESP_LOGCONFIG(TAG, "  Meter System Title: not configured (will obtain from AARE)");
   ESP_LOGCONFIG(TAG, "  DLMS Password: %s", DLMS_PASSWORD);
@@ -929,27 +931,42 @@ void NartisWmbusComponent::update() {
 
 void NartisWmbusComponent::set_next_state_(State next_state) {
   if (this->state_ != next_state) {
-    ESP_LOGD(TAG, "State: %s -> %s", LOG_STR_ARG(state_to_string_(this->state_)), LOG_STR_ARG(state_to_string_(next_state)));
+    ESP_LOGD(TAG, "State: %s -> %s", LOG_STR_ARG(state_to_string_(this->state_)),
+             LOG_STR_ARG(state_to_string_(next_state)));
   }
   this->state_ = next_state;
 }
 
 const LogString *NartisWmbusComponent::state_to_string_(State state) {
   switch (state) {
-    case State::NOT_INITIALIZED: return LOG_STR("NOT_INITIALIZED");
-    case State::IDLE:            return LOG_STR("IDLE");
-    case State::INIT_SESSION:    return LOG_STR("INIT_SESSION");
-    case State::SEND_INSTALL:    return LOG_STR("SEND_INSTALL");
-    case State::WAIT_INSTALL:    return LOG_STR("WAIT_INSTALL");
-    case State::SEND_AARQ:      return LOG_STR("SEND_AARQ");
-    case State::WAIT_AARE:      return LOG_STR("WAIT_AARE");
-    case State::DATA_REQUEST:    return LOG_STR("DATA_REQUEST");
-    case State::WAIT_RESPONSE:   return LOG_STR("WAIT_RESPONSE");
-    case State::DATA_NEXT:       return LOG_STR("DATA_NEXT");
-    case State::PUBLISH:         return LOG_STR("PUBLISH");
-    case State::LISTENING:       return LOG_STR("LISTENING");
-    case State::SNIFFING:        return LOG_STR("SNIFFING");
-    default:                     return LOG_STR("UNKNOWN");
+    case State::NOT_INITIALIZED:
+      return LOG_STR("NOT_INITIALIZED");
+    case State::IDLE:
+      return LOG_STR("IDLE");
+    case State::INIT_SESSION:
+      return LOG_STR("INIT_SESSION");
+    case State::SEND_INSTALL:
+      return LOG_STR("SEND_INSTALL");
+    case State::WAIT_INSTALL:
+      return LOG_STR("WAIT_INSTALL");
+    case State::SEND_AARQ:
+      return LOG_STR("SEND_AARQ");
+    case State::WAIT_AARE:
+      return LOG_STR("WAIT_AARE");
+    case State::DATA_REQUEST:
+      return LOG_STR("DATA_REQUEST");
+    case State::WAIT_RESPONSE:
+      return LOG_STR("WAIT_RESPONSE");
+    case State::DATA_NEXT:
+      return LOG_STR("DATA_NEXT");
+    case State::PUBLISH:
+      return LOG_STR("PUBLISH");
+    case State::LISTENING:
+      return LOG_STR("LISTENING");
+    case State::SNIFFING:
+      return LOG_STR("SNIFFING");
+    default:
+      return LOG_STR("UNKNOWN");
   }
 }
 
@@ -962,11 +979,10 @@ void NartisWmbusComponent::loop() {
     return;
 
   // Session watchdog — force back to IDLE if stuck (covers install+AARQ+data phases)
-  if (this->state_ != State::IDLE && this->state_ != State::SNIFFING &&
-      this->state_ != State::LISTENING && this->state_ != State::NOT_INITIALIZED &&
-      this->state_ != State::INIT_SESSION && this->check_session_timeout_()) {
-    ESP_LOGW(TAG, "Session timeout (%ums) in state %s — aborting",
-             SESSION_TIMEOUT_MS, LOG_STR_ARG(state_to_string_(this->state_)));
+  if (this->state_ != State::IDLE && this->state_ != State::SNIFFING && this->state_ != State::LISTENING &&
+      this->state_ != State::NOT_INITIALIZED && this->state_ != State::INIT_SESSION && this->check_session_timeout_()) {
+    ESP_LOGW(TAG, "Session timeout (%ums) in state %s — aborting", SESSION_TIMEOUT_MS,
+             LOG_STR_ARG(state_to_string_(this->state_)));
     this->radio_.go_standby();
     this->associated_ = false;
     this->set_next_state_(State::IDLE);
@@ -1067,8 +1083,8 @@ void NartisWmbusComponent::loop() {
         uint32_t serial = stripped[4] | (stripped[5] << 8) | (stripped[6] << 16) | (stripped[7] << 24);
         char mfr[4];
         decode_manufacturer_(m_field, mfr);
-        ESP_LOGI(TAG, "Install reply: C=0x%02X M=%s S=%08X v=%d t=0x%02X CI=0x%02X",
-                 stripped[1], mfr, serial, stripped[8], stripped[9], stripped[10]);
+        ESP_LOGI(TAG, "Install reply: C=0x%02X M=%s S=%08X v=%d t=0x%02X CI=0x%02X", stripped[1], mfr, serial,
+                 stripped[8], stripped[9], stripped[10]);
       } else {
         ESP_LOGD(TAG, "Install reply: bad frame (%d bytes)", rf_len);
         // Restart RX and keep waiting
@@ -1175,11 +1191,10 @@ void NartisWmbusComponent::loop() {
       sensor->parse_obis_bytes(obis_bytes);
 
       uint8_t get_req[20];
-      uint16_t req_len = this->build_get_request_(obis_bytes, sensor->get_class_id(),
-                                             sensor->get_attribute(), get_req);
+      uint16_t req_len = this->build_get_request_(obis_bytes, sensor->get_class_id(), sensor->get_attribute(), get_req);
 
-      ESP_LOGD(TAG, "GET.request for OBIS %s (class=%d, attr=%d)",
-               this->current_obis_, sensor->get_class_id(), sensor->get_attribute());
+      ESP_LOGD(TAG, "GET.request for OBIS %s (class=%d, attr=%d)", this->current_obis_, sensor->get_class_id(),
+               sensor->get_attribute());
 
       if (!this->transmit_dlms_(get_req, req_len, WMBUS_C_SND_NR, true)) {
         ESP_LOGW(TAG, "Failed to send GET.request");
@@ -1340,22 +1355,35 @@ void NartisWmbusComponent::hex_to_str_(const uint8_t *data, uint16_t len, char *
 
 const LogString *NartisWmbusComponent::c_field_to_string_(uint8_t c_field) {
   switch (c_field) {
-    case 0x44: return LOG_STR("SND-NR");
-    case 0x46: return LOG_STR("SND-IR");
-    case 0x08: return LOG_STR("RSP-UD");
-    case 0x00: return LOG_STR("SND-NKE");
-    case 0x40: return LOG_STR("SND-UD");
-    default:   return LOG_STR("???");
+    case WMBUS_C_SND_NR:
+      return LOG_STR("SND-NR");
+    case WMBUS_C_SND_IR:
+      return LOG_STR("SND-IR");
+    case WMBUS_C_RSP_UD:
+      return LOG_STR("RSP-UD");
+    case WMBUS_C_SND_NKE:
+      return LOG_STR("SND-NKE");
+    case WMBUS_C_SND_UD:
+      return LOG_STR("SND-UD");
+    default:
+      return LOG_STR("???");
   }
 }
 
 const LogString *NartisWmbusComponent::ci_field_to_string_(uint8_t ci_field) {
   switch (ci_field) {
-    case 0xBD: return LOG_STR("ENC-DLMS");
-    case 0xC5: return LOG_STR("PLAIN");
-    case 0x72: return LOG_STR("RSP-UD/12B");
-    case 0x78: return LOG_STR("RSP-UD/0B");
-    default:   return LOG_STR("???");
+    case WMBUS_CI_TPL_SHORT:
+      return LOG_STR("TPL-SHORT");
+    case WMBUS_CI_ENC:
+      return LOG_STR("ENC-DLMS");
+    case WMBUS_CI_PLAIN:
+      return LOG_STR("PLAIN");
+    case WMBUS_CI_RSP_UD_12B:
+      return LOG_STR("RSP-UD/12B");
+    case WMBUS_CI_RSP_UD_0B:
+      return LOG_STR("RSP-UD/0B");
+    default:
+      return LOG_STR("???");
   }
 }
 
@@ -1373,7 +1401,8 @@ void NartisWmbusComponent::log_raw_frame_(const uint8_t *data, uint16_t len) {
   ESP_LOGD(TAG, "SNIFF raw [%d bytes]:", len);
   while (pos < len) {
     uint16_t chunk = len - pos;
-    if (chunk > 64) chunk = 64;
+    if (chunk > 64)
+      chunk = 64;
     hex_to_str_(&data[pos], chunk, hex_buf, sizeof(hex_buf));
     ESP_LOGD(TAG, "  %s", hex_buf);
     pos += chunk;
@@ -1399,9 +1428,8 @@ void NartisWmbusComponent::log_parsed_frame_(const uint8_t *frame, uint16_t len)
   decode_manufacturer_(m_field, mfr);
 
   ESP_LOGI(TAG, "SNIFF #%u: L=%d C=0x%02X(%s) M=%s(0x%04X) A=%08X v=%d t=0x%02X CI=0x%02X(%s)",
-           this->sniffer_packet_count_, l_field, c_field, LOG_STR_ARG(c_field_to_string_(c_field)),
-           mfr, m_field, serial, version, dev_type,
-           ci_field, LOG_STR_ARG(ci_field_to_string_(ci_field)));
+           this->sniffer_packet_count_, l_field, c_field, LOG_STR_ARG(c_field_to_string_(c_field)), mfr, m_field,
+           serial, version, dev_type, ci_field, LOG_STR_ARG(ci_field_to_string_(ci_field)));
 
   // Parse payload depending on CI
   // CI=0x7A: TPL short header (4 bytes) + data
@@ -1409,12 +1437,11 @@ void NartisWmbusComponent::log_parsed_frame_(const uint8_t *frame, uint16_t len)
   uint16_t data_offset = 11;  // after DLL header (L+C+M+A+CI)
   uint16_t tpl_hdr_len = 0;
 
-  if (ci_field == 0x7A && len >= 15) {
+  if (ci_field == WMBUS_CI_TPL_SHORT && len >= 15) {
     // TPL short header: C_copy + CI_copy + access_nr + status
     tpl_hdr_len = 4;
     data_offset = 15;
-    ESP_LOGI(TAG, "  TPL: C=0x%02X CI=0x%02X acc=%d status=0x%02X",
-             frame[11], frame[12], frame[13], frame[14]);
+    ESP_LOGI(TAG, "  TPL: C=0x%02X CI=0x%02X acc=%d status=0x%02X", frame[11], frame[12], frame[13], frame[14]);
   }
 
   if (data_offset >= len)
@@ -1427,12 +1454,10 @@ void NartisWmbusComponent::log_parsed_frame_(const uint8_t *frame, uint16_t len)
   if (data_len >= 7 && data[0] == WMBUS_SC_GCM) {
     // Encrypted: SC(1) + pad(1) + IC(4) + ciphertext
     uint8_t sc = data[0];
-    uint32_t ic = ((uint32_t) data[2] << 24) | ((uint32_t) data[3] << 16) |
-                  ((uint32_t) data[4] << 8) | data[5];
+    uint32_t ic = ((uint32_t) data[2] << 24) | ((uint32_t) data[3] << 16) | ((uint32_t) data[4] << 8) | data[5];
     uint16_t ct_len = data_len - 6;
 
-    ESP_LOGI(TAG, "  ENC: SC=0x%02X IC=0x%08X(%u) ciphertext=%d bytes",
-             sc, ic, ic, ct_len);
+    ESP_LOGI(TAG, "  ENC: SC=0x%02X IC=0x%08X(%u) ciphertext=%d bytes", sc, ic, ic, ct_len);
 
     // Try decryption if we have the key and a system title
     if (ct_len > 0 && ct_len < MAX_APDU_SIZE) {
@@ -1469,15 +1494,14 @@ void NartisWmbusComponent::log_parsed_frame_(const uint8_t *frame, uint16_t len)
     hex_to_str_(data, dump_len, pay_hex, sizeof(pay_hex));
     ESP_LOGI(TAG, "  PLAIN [%d]: %s%s", data_len, pay_hex, data_len > 64 ? "..." : "");
 
-    // Check if this is an AARE (tag 0x61) — extract system title for future decryption
-    if (data_len > 2 && data[0] == 0x61) {
+    // Check if this is an AARE — extract system title for future decryption
+    if (data_len > 2 && data[0] == DLMS_TAG_AARE) {
       ESP_LOGI(TAG, "  Detected AARE — attempting system title extraction");
       if (this->parse_aare_(data, data_len)) {
-        ESP_LOGI(TAG, "  System title captured: %02X%02X%02X%02X%02X%02X%02X%02X",
-                 this->meter_system_title_[0], this->meter_system_title_[1],
-                 this->meter_system_title_[2], this->meter_system_title_[3],
-                 this->meter_system_title_[4], this->meter_system_title_[5],
-                 this->meter_system_title_[6], this->meter_system_title_[7]);
+        ESP_LOGI(TAG, "  System title captured: %02X%02X%02X%02X%02X%02X%02X%02X", this->meter_system_title_[0],
+                 this->meter_system_title_[1], this->meter_system_title_[2], this->meter_system_title_[3],
+                 this->meter_system_title_[4], this->meter_system_title_[5], this->meter_system_title_[6],
+                 this->meter_system_title_[7]);
       }
     }
   }
@@ -1513,10 +1537,14 @@ void NartisWmbusComponent::sniff_loop_() {
 
 const LogString *NartisWmbusComponent::mode_to_string_(Mode mode) {
   switch (mode) {
-    case Mode::SESSION: return LOG_STR("SESSION");
-    case Mode::LISTEN:  return LOG_STR("LISTEN");
-    case Mode::SNIFFER: return LOG_STR("SNIFFER");
-    default:            return LOG_STR("UNKNOWN");
+    case Mode::SESSION:
+      return LOG_STR("SESSION");
+    case Mode::LISTEN:
+      return LOG_STR("LISTEN");
+    case Mode::SNIFFER:
+      return LOG_STR("SNIFFER");
+    default:
+      return LOG_STR("UNKNOWN");
   }
 }
 
@@ -1541,9 +1569,8 @@ void NartisWmbusComponent::listen_loop_() {
   uint32_t serial = stripped[4] | (stripped[5] << 8) | (stripped[6] << 16) | (stripped[7] << 24);
   char mfr[4];
   decode_manufacturer_(m_field, mfr);
-  ESP_LOGI(TAG, "LISTEN #%u: C=0x%02X(%s) M=%s S=%08X v=%d t=0x%02X CI=0x%02X(%s)",
-           this->listen_packet_count_, stripped[1], LOG_STR_ARG(c_field_to_string_(stripped[1])),
-           mfr, serial, stripped[8], stripped[9],
+  ESP_LOGI(TAG, "LISTEN #%u: C=0x%02X(%s) M=%s S=%08X v=%d t=0x%02X CI=0x%02X(%s)", this->listen_packet_count_,
+           stripped[1], LOG_STR_ARG(c_field_to_string_(stripped[1])), mfr, serial, stripped[8], stripped[9],
            stripped[10], LOG_STR_ARG(ci_field_to_string_(stripped[10])));
 
   // Extract DLMS APDU (re-parses CRCs internally — minor overhead)
@@ -1570,16 +1597,26 @@ void NartisWmbusComponent::listen_parse_dlms_(const uint8_t *data, uint16_t len)
   // Log known APDU tags for context
   uint8_t tag = data[0];
   switch (tag) {
-    case 0x0C: ESP_LOGI(TAG, "LISTEN: data-notification"); break;
-    case 0xC4: ESP_LOGI(TAG, "LISTEN: GET.response"); break;
-    case 0xC5: ESP_LOGI(TAG, "LISTEN: SET.response"); break;
-    case 0xC7: ESP_LOGI(TAG, "LISTEN: ACTION.response"); break;
-    case 0x61: {
+    case DLMS_TAG_DATA_NOTIFICATION:
+      ESP_LOGI(TAG, "LISTEN: data-notification");
+      break;
+    case DLMS_TAG_GET_RESPONSE:
+      ESP_LOGI(TAG, "LISTEN: GET.response");
+      break;
+    case DLMS_TAG_SET_RESPONSE:
+      ESP_LOGI(TAG, "LISTEN: SET.response");
+      break;
+    case DLMS_TAG_ACTION_RESPONSE:
+      ESP_LOGI(TAG, "LISTEN: ACTION.response");
+      break;
+    case DLMS_TAG_AARE: {
       ESP_LOGI(TAG, "LISTEN: AARE — extracting system title");
       this->parse_aare_(data, len);
       return;
     }
-    default: ESP_LOGI(TAG, "LISTEN: DLMS tag 0x%02X", tag); break;
+    default:
+      ESP_LOGI(TAG, "LISTEN: DLMS tag 0x%02X", tag);
+      break;
   }
 
   // TODO: parse push data structure once format is known

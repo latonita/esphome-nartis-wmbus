@@ -18,37 +18,46 @@ namespace esphome::nartis_wmbus {
 // ============================================================================
 // DLMS A-XDR Data Type Tags (IEC 62056, Blue Book Table 2)
 // ============================================================================
-static constexpr uint8_t DLMS_TYPE_BOOLEAN        = 0x03;
-static constexpr uint8_t DLMS_TYPE_INT8           = 0x0F;
-static constexpr uint8_t DLMS_TYPE_UINT8          = 0x11;
-static constexpr uint8_t DLMS_TYPE_INT16          = 0x10;
-static constexpr uint8_t DLMS_TYPE_UINT16         = 0x12;
-static constexpr uint8_t DLMS_TYPE_INT32          = 0x05;
-static constexpr uint8_t DLMS_TYPE_UINT32         = 0x06;
-static constexpr uint8_t DLMS_TYPE_INT64          = 0x14;
-static constexpr uint8_t DLMS_TYPE_UINT64         = 0x15;
-static constexpr uint8_t DLMS_TYPE_FLOAT32        = 0x17;
-static constexpr uint8_t DLMS_TYPE_FLOAT64        = 0x18;
-static constexpr uint8_t DLMS_TYPE_ENUM           = 0x16;
-static constexpr uint8_t DLMS_TYPE_OCTET_STRING   = 0x09;
+static constexpr uint8_t DLMS_TYPE_BOOLEAN = 0x03;
+static constexpr uint8_t DLMS_TYPE_INT8 = 0x0F;
+static constexpr uint8_t DLMS_TYPE_UINT8 = 0x11;
+static constexpr uint8_t DLMS_TYPE_INT16 = 0x10;
+static constexpr uint8_t DLMS_TYPE_UINT16 = 0x12;
+static constexpr uint8_t DLMS_TYPE_INT32 = 0x05;
+static constexpr uint8_t DLMS_TYPE_UINT32 = 0x06;
+static constexpr uint8_t DLMS_TYPE_INT64 = 0x14;
+static constexpr uint8_t DLMS_TYPE_UINT64 = 0x15;
+static constexpr uint8_t DLMS_TYPE_FLOAT32 = 0x17;
+static constexpr uint8_t DLMS_TYPE_FLOAT64 = 0x18;
+static constexpr uint8_t DLMS_TYPE_ENUM = 0x16;
+static constexpr uint8_t DLMS_TYPE_OCTET_STRING = 0x09;
 static constexpr uint8_t DLMS_TYPE_VISIBLE_STRING = 0x0A;
-static constexpr uint8_t DLMS_TYPE_UTF8_STRING    = 0x0C;
-static constexpr uint8_t DLMS_TYPE_DATETIME       = 0x19;  // tagged datetime (not used in GET.response data)
+static constexpr uint8_t DLMS_TYPE_UTF8_STRING = 0x0C;
+static constexpr uint8_t DLMS_TYPE_DATETIME = 0x19;  // tagged datetime (not used in GET.response data)
 
 // DLMS APDU tags
-static constexpr uint8_t DLMS_TAG_GET_RESPONSE    = 0xC4;
+static constexpr uint8_t DLMS_TAG_DATA_NOTIFICATION = 0x0C;
+static constexpr uint8_t DLMS_TAG_GET_RESPONSE = 0xC4;
+static constexpr uint8_t DLMS_TAG_SET_RESPONSE = 0xC5;
+static constexpr uint8_t DLMS_TAG_ACTION_RESPONSE = 0xC7;
+static constexpr uint8_t DLMS_TAG_AARE = 0x61;
 
 // ============================================================================
 // W-MBus Constants
 // ============================================================================
-static constexpr uint8_t WMBUS_C_SND_NR = 0x44;   // Send, No Reply expected
-static constexpr uint8_t WMBUS_C_SND_IR = 0x46;   // Send, Install Request
-static constexpr uint8_t WMBUS_C_RSP_UD = 0x08;   // Response, User Data
-static constexpr uint8_t WMBUS_CI_ENC = 0xBD;     // Encrypted DLMS payload
-static constexpr uint8_t WMBUS_CI_PLAIN = 0xC5;   // Unencrypted command
-static constexpr uint8_t WMBUS_SC_GCM = 0x94;     // AES-GCM-128 encrypted+compressed
-static constexpr uint8_t WMBUS_BLOCK_SIZE = 16;    // Data bytes per CRC block
-static constexpr uint8_t WMBUS_FIRST_BLOCK = 10;   // First block: L+C+M+A = 10 bytes
+static constexpr uint8_t WMBUS_C_SND_NR = 0x44;       // Send, No Reply expected
+static constexpr uint8_t WMBUS_C_SND_IR = 0x46;       // Send, Install Request
+static constexpr uint8_t WMBUS_C_RSP_UD = 0x08;       // Response, User Data
+static constexpr uint8_t WMBUS_C_SND_NKE = 0x00;      // Send, No Keep Alive
+static constexpr uint8_t WMBUS_C_SND_UD = 0x40;       // Send, User Data
+static constexpr uint8_t WMBUS_CI_TPL_SHORT = 0x7A;   // TPL short header (4 bytes)
+static constexpr uint8_t WMBUS_CI_ENC = 0xBD;         // Encrypted DLMS payload
+static constexpr uint8_t WMBUS_CI_PLAIN = 0xC5;       // Unencrypted command
+static constexpr uint8_t WMBUS_CI_RSP_UD_12B = 0x72;  // RSP_UD with 12-byte header
+static constexpr uint8_t WMBUS_CI_RSP_UD_0B = 0x78;   // RSP_UD with 0-byte header
+static constexpr uint8_t WMBUS_SC_GCM = 0x94;         // AES-GCM-128 encrypted+compressed
+static constexpr uint8_t WMBUS_BLOCK_SIZE = 16;       // Data bytes per CRC block
+static constexpr uint8_t WMBUS_FIRST_BLOCK = 10;      // First block: L+C+M+A = 10 bytes
 
 // Buffer sizes
 static constexpr uint16_t MAX_FRAME_SIZE = 512;
@@ -77,9 +86,9 @@ static constexpr uint8_t OUR_DEVICE_TYPE = 0x00;
 // Our system title prefix ('E','S') — remaining 6 bytes filled from ESP32 MAC at runtime
 
 // DLMS credentials
-static constexpr uint8_t DLMS_CLIENT_SAP = 0x20;      // Meter reader association
+static constexpr uint8_t DLMS_CLIENT_SAP = 0x20;  // Meter reader association
 static constexpr uint16_t DLMS_SERVER_SAP = 0x0001;
-static constexpr char DLMS_PASSWORD[] = "123456";       // Default LLS password
+static constexpr char DLMS_PASSWORD[] = "123456";  // Default LLS password
 
 // ============================================================================
 // DLMS APDU Templates
@@ -87,28 +96,26 @@ static constexpr char DLMS_PASSWORD[] = "123456";       // Default LLS password
 
 // AARQ: Application-context=LN-no-ciphering, mechanism=LLS, password="123456"
 static const uint8_t AARQ_TEMPLATE[] = {
-    0x60, 0x34,                         // AARQ tag + length (52 bytes)
+    0x60, 0x34,  // AARQ tag + length (52 bytes)
     // --- application-context-name [1] ---
-    0xA1, 0x09, 0x06, 0x07,
-    0x60, 0x85, 0x74, 0x05, 0x08, 0x01, 0x01,  // LN-no-ciphering {2.16.756.5.8.1.1}
+    0xA1, 0x09, 0x06, 0x07, 0x60, 0x85, 0x74, 0x05, 0x08, 0x01, 0x01,  // LN-no-ciphering {2.16.756.5.8.1.1}
     // --- sender-acse-requirements [10] ---
-    0x8A, 0x02, 0x07, 0x80,            // BIT STRING: authentication functional unit
+    0x8A, 0x02, 0x07, 0x80,  // BIT STRING: authentication functional unit
     // --- mechanism-name [11] ---
-    0x8B, 0x07,
-    0x60, 0x85, 0x74, 0x05, 0x08, 0x02, 0x01,  // LLS {2.16.756.5.8.2.1}
+    0x8B, 0x07, 0x60, 0x85, 0x74, 0x05, 0x08, 0x02, 0x01,  // LLS {2.16.756.5.8.2.1}
     // --- calling-authentication-value [12] ---
-    0xAC, 0x08, 0x80, 0x06,            // GraphicString, 6 bytes
+    0xAC, 0x08, 0x80, 0x06,              // GraphicString, 6 bytes
     0x31, 0x32, 0x33, 0x34, 0x35, 0x36,  // "123456"
     // --- user-information [30]: xDLMS-Initiate ---
-    0xBE, 0x10, 0x04, 0x0E,            // OCTET STRING, 14 bytes
-    0x01,                               // initiate-request tag
-    0x00,                               // dedicated-key: absent
-    0x00,                               // response-allowed: default (TRUE)
-    0x00,                               // proposed-quality-of-service: absent
-    0x07,                               // proposed-dlms-version-number = 7
-    0x5F, 0x1F, 0x04, 0x00,            // proposed-conformance: [31] BIT STRING, 4 bytes
-    0x00, 0x7E, 0x1F,                   // LN: get,set,selective-access,block-transfer,action
-    0x01, 0x2C,                         // client-max-receive-pdu-size = 300
+    0xBE, 0x10, 0x04, 0x0E,  // OCTET STRING, 14 bytes
+    0x01,                    // initiate-request tag
+    0x00,                    // dedicated-key: absent
+    0x00,                    // response-allowed: default (TRUE)
+    0x00,                    // proposed-quality-of-service: absent
+    0x07,                    // proposed-dlms-version-number = 7
+    0x5F, 0x1F, 0x04, 0x00,  // proposed-conformance: [31] BIT STRING, 4 bytes
+    0x00, 0x7E, 0x1F,        // LN: get,set,selective-access,block-transfer,action
+    0x01, 0x2C,              // client-max-receive-pdu-size = 300
 };
 
 // ============================================================================
@@ -117,9 +124,9 @@ static const uint8_t AARQ_TEMPLATE[] = {
 
 // Operating mode
 enum class Mode : uint8_t {
-  SESSION = 0,   // Active DLMS session (AARQ → GET requests → RLRQ)
-  LISTEN = 1,    // Passive: wait for meter push, log all, publish matching sensors
-  SNIFFER = 2,   // Raw packet dump, no sensor publishing
+  SESSION = 0,  // Active DLMS session (AARQ → GET requests → RLRQ)
+  LISTEN = 1,   // Passive: wait for meter push, log all, publish matching sensors
+  SNIFFER = 2,  // Raw packet dump, no sensor publishing
 };
 
 using SensorMap = std::multimap<std::string, NartisWmbusSensorBase *>;
@@ -159,9 +166,9 @@ class NartisWmbusComponent : public PollingComponent {
     NOT_INITIALIZED,
     IDLE,
     INIT_SESSION,
-    SEND_INSTALL,     // Send SND-IR install request (pairing beacon)
-    WAIT_INSTALL,     // Wait for meter's install reply
-    SEND_AARQ,        // Send DLMS AARQ (association request)
+    SEND_INSTALL,  // Send SND-IR install request (pairing beacon)
+    WAIT_INSTALL,  // Wait for meter's install reply
+    SEND_AARQ,     // Send DLMS AARQ (association request)
     WAIT_AARE,
     DATA_REQUEST,
     WAIT_RESPONSE,
@@ -180,7 +187,10 @@ class NartisWmbusComponent : public PollingComponent {
   } wait_{};
 
   bool check_timeout_() const { return millis() - this->wait_.start_time >= this->wait_.timeout_ms; }
-  void start_timeout_(uint32_t ms) { this->wait_.start_time = millis(); this->wait_.timeout_ms = ms; }
+  void start_timeout_(uint32_t ms) {
+    this->wait_.start_time = millis();
+    this->wait_.timeout_ms = ms;
+  }
 
   // Session watchdog
   uint32_t session_start_ms_{0};
@@ -199,8 +209,8 @@ class NartisWmbusComponent : public PollingComponent {
 
   // Encryption key and system titles
   std::array<uint8_t, 16> decryption_key_{};
-  std::array<uint8_t, 8> system_title_{};  // Our system title (auto-generated from MAC)
-  char meter_id_[13]{};                      // 12-digit meter serial from label (optional, for logging)
+  std::array<uint8_t, 8> system_title_{};                // Our system title (auto-generated from MAC)
+  char meter_id_[13]{};                                  // 12-digit meter serial from label (optional, for logging)
   std::array<uint8_t, 8> configured_meter_sys_title_{};  // Meter's system title from YAML
   bool meter_sys_title_configured_{false};
 
@@ -226,11 +236,9 @@ class NartisWmbusComponent : public PollingComponent {
   static uint16_t crc16_en13757(const uint8_t *data, uint16_t len);
 
   // W-MBus frame build/parse
-  uint16_t wmbus_frame_build_(uint8_t c_field, uint8_t ci_field,
-                               const uint8_t *payload, uint16_t pay_len,
-                               uint8_t *out);
-  uint16_t wmbus_frame_parse_(const uint8_t *frame, uint16_t frame_len,
-                               uint8_t *out);
+  uint16_t wmbus_frame_build_(uint8_t c_field, uint8_t ci_field, const uint8_t *payload, uint16_t pay_len,
+                              uint8_t *out);
+  uint16_t wmbus_frame_parse_(const uint8_t *frame, uint16_t frame_len, uint8_t *out);
 
   // W-MBus encrypt/decrypt
   uint16_t wmbus_encrypt_(const uint8_t *dlms_apdu, uint16_t apdu_len, uint8_t *out);
@@ -240,26 +248,23 @@ class NartisWmbusComponent : public PollingComponent {
   // AES-128-GCM encrypt/decrypt with AAD and auth tag support
   // tag_buf: on encrypt, receives generated tag; on decrypt, contains expected tag
   // tag_len: 0 = no tag (SC=0x94), 12 = standard GCM tag (SC with bit 0x20)
-  bool aes_gcm_crypt_(bool encrypt, const uint8_t *key, const uint8_t *nonce,
-                       const uint8_t *aad, uint16_t aad_len,
-                       const uint8_t *input, uint16_t len, uint8_t *output,
-                       uint8_t *tag_buf = nullptr, uint8_t tag_len = 0);
+  bool aes_gcm_crypt_(bool encrypt, const uint8_t *key, const uint8_t *nonce, const uint8_t *aad, uint16_t aad_len,
+                      const uint8_t *input, uint16_t len, uint8_t *output, uint8_t *tag_buf = nullptr,
+                      uint8_t tag_len = 0);
 
   // DLMS APDU helpers
-  uint16_t build_get_request_(const uint8_t obis[6], uint16_t class_id,
-                               uint8_t attr, uint8_t *out);
+  uint16_t build_get_request_(const uint8_t obis[6], uint16_t class_id, uint8_t attr, uint8_t *out);
   bool parse_aare_(const uint8_t *data, uint16_t len);
-  bool parse_get_response_(const uint8_t *data, uint16_t len,
-                           float &value, char *text_buf, uint16_t text_buf_size, bool &is_text);
+  bool parse_get_response_(const uint8_t *data, uint16_t len, float &value, char *text_buf, uint16_t text_buf_size,
+                           bool &is_text);
 
   // W-MBus Install Request (SND-IR pairing beacon, per firmware 0x101DC)
   void build_install_payload_(uint8_t out[INSTALL_PAYLOAD_SIZE]);
   bool send_install_frame_();
 
   // High-level TX/RX
-  bool transmit_dlms_(const uint8_t *apdu, uint16_t apdu_len,
-                       uint8_t c_field, bool encrypt);
-  uint16_t receive_dlms_(uint8_t *dlms_out, uint32_t timeout_ms);  // blocking (sniffer only)
+  bool transmit_dlms_(const uint8_t *apdu, uint16_t apdu_len, uint8_t c_field, bool encrypt);
+  uint16_t receive_dlms_(uint8_t *dlms_out, uint32_t timeout_ms);                         // blocking (sniffer only)
   uint16_t process_rx_frame_(const uint8_t *rf_buf, uint16_t rf_len, uint8_t *dlms_out);  // non-blocking parse
 
   // Invocation counter resets to 0 each boot (no NVS persistence needed)
