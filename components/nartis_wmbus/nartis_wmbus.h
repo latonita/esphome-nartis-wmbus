@@ -8,8 +8,8 @@
 #include <cstring>
 
 #include "cmt2300a.h"
-#include "dlms_helpers.h"
-#include "wmbus_protocol.h"
+#include "dlms_layer.h"
+#include "wmbus_transport.h"
 #include "sensors_registry.h"
 #include "nartis_wmbus_sensor.h"
 

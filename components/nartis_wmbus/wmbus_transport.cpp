@@ -1,4 +1,4 @@
-#include "wmbus_protocol.h"
+#include "wmbus_transport.h"
 
 #include "esphome/core/log.h"
 
