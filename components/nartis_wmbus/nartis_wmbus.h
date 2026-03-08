@@ -56,11 +56,14 @@ static constexpr uint16_t MAX_FRAME_SIZE = 512;
 static constexpr uint16_t MAX_APDU_SIZE = 300;
 
 // Timeouts (ms)
+static constexpr uint32_t INSTALL_TIMEOUT_MS = 3000;  // SND-IR install reply wait
 static constexpr uint32_t AARE_TIMEOUT_MS = 3000;
 static constexpr uint32_t RESPONSE_TIMEOUT_MS = 5000;
-static constexpr uint32_t RELEASE_TIMEOUT_MS = 2000;
-static constexpr uint32_t SESSION_TIMEOUT_MS = 5000;
+static constexpr uint32_t SESSION_TIMEOUT_MS = 10000;  // overall session watchdog (install+AARQ+data)
 static constexpr uint8_t MAX_RETRIES = 3;
+
+// Install payload size (per firmware: 13 bytes from EEPROM Section 14)
+static constexpr uint8_t INSTALL_PAYLOAD_SIZE = 13;
 
 // ============================================================================
 // Hardcoded Configuration
@@ -72,9 +75,7 @@ static constexpr uint8_t OUR_ADDRESS[4] = {0x00, 0x00, 0x01, 0x00};
 static constexpr uint8_t OUR_VERSION = 0x01;
 static constexpr uint8_t OUR_DEVICE_TYPE = 0x00;
 
-// Default DLMS system title for our CIU (EEPROM factory placeholder)
-// Configurable via yaml system_title option
-static constexpr uint8_t DEFAULT_SYSTEM_TITLE[8] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+// Our system title prefix ('E','S') — remaining 6 bytes filled from ESP32 MAC at runtime
 
 // DLMS credentials
 static constexpr uint8_t DLMS_CLIENT_SAP = 0x20;      // Meter reader association
@@ -111,11 +112,6 @@ static const uint8_t AARQ_TEMPLATE[] = {
     0x01, 0x2C,                         // client-max-receive-pdu-size = 300
 };
 
-// RLRQ (Release Request)
-static const uint8_t RLRQ_TEMPLATE[] = {
-    0x62, 0x00,  // RLRQ tag + length (minimal)
-};
-
 // ============================================================================
 // Component
 // ============================================================================
@@ -145,8 +141,13 @@ class NartisWmbusComponent : public PollingComponent {
   void set_pin_gpio1(InternalGPIOPin *pin) { pin_gpio1_ = pin; }
   void set_channel(uint8_t ch) { channel_ = ch; }
   void set_decryption_key(const std::array<uint8_t, 16> &key) { decryption_key_ = key; }
-  void set_system_title(const std::array<uint8_t, 8> &title) { system_title_ = title; }
+  void set_meter_id(const std::string &id) { meter_id_ = id; }
+  void set_meter_system_title(const std::array<uint8_t, 8> &title) {
+    configured_meter_sys_title_ = title;
+    meter_sys_title_configured_ = true;
+  }
   void set_mode(uint8_t m) { mode_ = static_cast<Mode>(m); }
+  void set_aggressive_reconnect(bool v) { aggressive_reconnect_ = v; }
 
   void register_sensor(NartisWmbusSensorBase *sensor);
 
@@ -155,14 +156,14 @@ class NartisWmbusComponent : public PollingComponent {
   enum class State : uint8_t {
     NOT_INITIALIZED,
     IDLE,
-    INIT_RADIO,
-    SEND_AARQ,
+    INIT_SESSION,
+    SEND_INSTALL,     // Send SND-IR install request (pairing beacon)
+    WAIT_INSTALL,     // Wait for meter's install reply
+    SEND_AARQ,        // Send DLMS AARQ (association request)
     WAIT_AARE,
     DATA_REQUEST,
     WAIT_RESPONSE,
     DATA_NEXT,
-    SEND_RELEASE,
-    WAIT_RELEASE,
     PUBLISH,
     LISTENING,
     SNIFFING,
@@ -192,14 +193,19 @@ class NartisWmbusComponent : public PollingComponent {
   InternalGPIOPin *pin_gpio1_{nullptr};
   uint8_t channel_{1};
   Mode mode_{Mode::SESSION};
+  bool aggressive_reconnect_{false};
 
-  // Encryption key and system title
+  // Encryption key and system titles
   std::array<uint8_t, 16> decryption_key_{};
-  std::array<uint8_t, 8> system_title_{0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+  std::array<uint8_t, 8> system_title_{};  // Our system title (auto-generated from MAC)
+  std::string meter_id_;                    // 12-digit meter serial from label (optional, for logging)
+  std::array<uint8_t, 8> configured_meter_sys_title_{};  // Meter's system title from YAML
+  bool meter_sys_title_configured_{false};
 
   // DLMS session state
   uint8_t meter_system_title_[8]{};
   bool system_title_valid_{false};
+  bool associated_{false};
   uint32_t invocation_counter_{0};
   uint8_t access_nr_{0};
   uint8_t retry_count_{0};
@@ -243,6 +249,10 @@ class NartisWmbusComponent : public PollingComponent {
   bool parse_aare_(const uint8_t *data, uint16_t len);
   bool parse_get_response_(const uint8_t *data, uint16_t len,
                            float &value, std::string &text_value, bool &is_text);
+
+  // W-MBus Install Request (SND-IR pairing beacon, per firmware 0x101DC)
+  void build_install_payload_(uint8_t out[INSTALL_PAYLOAD_SIZE]);
+  bool send_install_frame_();
 
   // High-level TX/RX
   bool transmit_dlms_(const uint8_t *apdu, uint16_t apdu_len,

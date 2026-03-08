@@ -1,6 +1,7 @@
 #include "nartis_wmbus.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/application.h"
 #include "esphome/core/preferences.h"
 
@@ -464,11 +465,18 @@ bool NartisWmbusComponent::parse_aare_(const uint8_t *data, uint16_t len) {
         memcpy(meter_system_title_, &data[pos + 2], 8);
         system_title_valid_ = true;
         found_system_title = true;
-        ESP_LOGD(TAG, "AARE: meter system title: %02X%02X%02X%02X%02X%02X%02X%02X",
+        ESP_LOGI(TAG, "************************************************************");
+        ESP_LOGI(TAG, "  Meter system title: %02X%02X%02X%02X%02X%02X%02X%02X",
                  meter_system_title_[0], meter_system_title_[1],
                  meter_system_title_[2], meter_system_title_[3],
                  meter_system_title_[4], meter_system_title_[5],
                  meter_system_title_[6], meter_system_title_[7]);
+        ESP_LOGI(TAG, "  Add to YAML:  meter_system_title: \"%02X%02X%02X%02X%02X%02X%02X%02X\"",
+                 meter_system_title_[0], meter_system_title_[1],
+                 meter_system_title_[2], meter_system_title_[3],
+                 meter_system_title_[4], meter_system_title_[5],
+                 meter_system_title_[6], meter_system_title_[7]);
+        ESP_LOGI(TAG, "************************************************************");
       }
     }
 
@@ -650,6 +658,57 @@ bool NartisWmbusComponent::parse_get_response_(const uint8_t *data, uint16_t len
 }
 
 // ============================================================================
+// W-MBus Install Request (SND-IR pairing beacon)
+// Per firmware: send_install_req (0x101DC), write_install_payload (0xFD6C)
+//
+// The install request is a STANDALONE W-MBus SND-IR frame sent BEFORE the
+// DLMS AARQ to register our link-layer address with the meter. It carries
+// a 13-byte payload derived from the session identity (meter serial or padding).
+// This is SEPARATE from AARQ — the firmware sends them as two distinct steps.
+//
+// Frame: L + C(0x46) + M(2) + A(6) + CI(0x7A) + TPL(4) + install_payload(13)
+// Always unencrypted (encryption_check at 0xB71A returns 0 for C=0x46).
+// ============================================================================
+
+void NartisWmbusComponent::build_install_payload_(uint8_t out[INSTALL_PAYLOAD_SIZE]) {
+  // Per firmware write_install_payload (0xFD6C):
+  //   - Takes last 13 bytes of EEPROM Section 14 password record
+  //   - Factory default: 13 bytes of 0x30 ('0')
+  //   - With real data: meter serial + padding, right-aligned
+  //
+  // For our ESP32 reader: use meter_id if configured, else '0' padding
+  if (!meter_id_.empty()) {
+    // Right-align meter_id in 13 bytes, front-pad with '0'
+    uint8_t pad = INSTALL_PAYLOAD_SIZE;
+    uint8_t copy_len = meter_id_.size();
+    if (copy_len > INSTALL_PAYLOAD_SIZE)
+      copy_len = INSTALL_PAYLOAD_SIZE;
+    pad -= copy_len;
+    memset(out, 0x30, pad);
+    memcpy(out + pad, meter_id_.c_str(), copy_len);
+  } else {
+    // Factory default: 13 bytes of ASCII '0'
+    memset(out, 0x30, INSTALL_PAYLOAD_SIZE);
+  }
+}
+
+bool NartisWmbusComponent::send_install_frame_() {
+  uint8_t payload[INSTALL_PAYLOAD_SIZE];
+  build_install_payload_(payload);
+
+  uint8_t frame_buf[MAX_FRAME_SIZE];
+
+  // Increment access number (per firmware frame_set_mode 0xBAF4)
+  access_nr_++;
+
+  // Build SND-IR frame with install payload (always unencrypted)
+  uint16_t frame_len = wmbus_frame_build_(WMBUS_C_SND_IR, 0x7A, payload, INSTALL_PAYLOAD_SIZE, frame_buf);
+
+  ESP_LOGD(TAG, "Sending SND-IR install request (%d bytes)", frame_len);
+  return radio_.send_packet(frame_buf, frame_len, channel_);
+}
+
+// ============================================================================
 // High-level TX/RX
 // ============================================================================
 
@@ -774,6 +833,11 @@ void NartisWmbusComponent::register_sensor(NartisWmbusSensorBase *sensor) {
 void NartisWmbusComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up Nartis W-MBus component...");
 
+  // Auto-generate our system title from ESP32 MAC: 'E' 'S' + 6 MAC bytes
+  uint8_t mac[6];
+  get_mac_address_raw(mac);
+  system_title_ = {'E', 'S', mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]};
+
   // Initialize radio
   radio_.set_pins(pin_sdio_, pin_sclk_, pin_csb_, pin_fcsb_, pin_gpio1_);
 
@@ -791,15 +855,19 @@ void NartisWmbusComponent::setup() {
         this->state_ = State::SNIFFING;
         break;
       case Mode::LISTEN:
-        // In listen mode, system_title config = meter's system title (for decryption)
-        memcpy(this->meter_system_title_, this->system_title_.data(), 8);
-        this->system_title_valid_ = true;
-        ESP_LOGI(TAG, "Entering LISTEN mode on ch %d (%.3f MHz), sys_title=%02X%02X%02X%02X%02X%02X%02X%02X",
-                 this->channel_, freq,
-                 this->meter_system_title_[0], this->meter_system_title_[1],
-                 this->meter_system_title_[2], this->meter_system_title_[3],
-                 this->meter_system_title_[4], this->meter_system_title_[5],
-                 this->meter_system_title_[6], this->meter_system_title_[7]);
+        if (this->meter_sys_title_configured_) {
+          memcpy(this->meter_system_title_, this->configured_meter_sys_title_.data(), 8);
+          this->system_title_valid_ = true;
+          ESP_LOGI(TAG, "Entering LISTEN mode on ch %d (%.3f MHz), meter_sys_title=%02X%02X%02X%02X%02X%02X%02X%02X",
+                   this->channel_, freq,
+                   this->meter_system_title_[0], this->meter_system_title_[1],
+                   this->meter_system_title_[2], this->meter_system_title_[3],
+                   this->meter_system_title_[4], this->meter_system_title_[5],
+                   this->meter_system_title_[6], this->meter_system_title_[7]);
+        } else {
+          ESP_LOGW(TAG, "Entering LISTEN mode on ch %d (%.3f MHz) — no meter_system_title configured, decryption disabled",
+                   this->channel_, freq);
+        }
         this->state_ = State::LISTENING;
         break;
       default:
@@ -817,10 +885,24 @@ void NartisWmbusComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  AES Key: %02X%02X%02X%02X...%02X%02X%02X%02X",
                 decryption_key_[0], decryption_key_[1], decryption_key_[2], decryption_key_[3],
                 decryption_key_[12], decryption_key_[13], decryption_key_[14], decryption_key_[15]);
+  ESP_LOGCONFIG(TAG, "  Our System Title: %02X%02X%02X%02X%02X%02X%02X%02X (from MAC)",
+                system_title_[0], system_title_[1], system_title_[2], system_title_[3],
+                system_title_[4], system_title_[5], system_title_[6], system_title_[7]);
+  if (!meter_id_.empty())
+    ESP_LOGCONFIG(TAG, "  Meter ID: %s", meter_id_.c_str());
+  if (meter_sys_title_configured_)
+    ESP_LOGCONFIG(TAG, "  Meter System Title: %02X%02X%02X%02X%02X%02X%02X%02X",
+                  configured_meter_sys_title_[0], configured_meter_sys_title_[1],
+                  configured_meter_sys_title_[2], configured_meter_sys_title_[3],
+                  configured_meter_sys_title_[4], configured_meter_sys_title_[5],
+                  configured_meter_sys_title_[6], configured_meter_sys_title_[7]);
+  else
+    ESP_LOGCONFIG(TAG, "  Meter System Title: not configured (will obtain from AARE)");
   ESP_LOGCONFIG(TAG, "  DLMS Password: %s", DLMS_PASSWORD);
   ESP_LOGCONFIG(TAG, "  Client SAP: 0x%02X", DLMS_CLIENT_SAP);
   ESP_LOGCONFIG(TAG, "  Invocation Counter: %u", invocation_counter_);
   ESP_LOGCONFIG(TAG, "  Mode: %s", LOG_STR_ARG(mode_to_string_(mode_)));
+  ESP_LOGCONFIG(TAG, "  Aggressive Reconnect: %s", YESNO(aggressive_reconnect_));
   ESP_LOGCONFIG(TAG, "  Sensors: %d", sensors_.size());
   LOG_UPDATE_INTERVAL(this);
 }
@@ -848,7 +930,7 @@ void NartisWmbusComponent::update() {
   }
 
   ESP_LOGD(TAG, "Starting data collection session");
-  set_next_state_(State::INIT_RADIO);
+  set_next_state_(State::INIT_SESSION);
 }
 
 void NartisWmbusComponent::set_next_state_(State next_state) {
@@ -862,14 +944,14 @@ const LogString *NartisWmbusComponent::state_to_string_(State state) {
   switch (state) {
     case State::NOT_INITIALIZED: return LOG_STR("NOT_INITIALIZED");
     case State::IDLE:            return LOG_STR("IDLE");
-    case State::INIT_RADIO:      return LOG_STR("INIT_RADIO");
-    case State::SEND_AARQ:       return LOG_STR("SEND_AARQ");
-    case State::WAIT_AARE:       return LOG_STR("WAIT_AARE");
+    case State::INIT_SESSION:    return LOG_STR("INIT_SESSION");
+    case State::SEND_INSTALL:    return LOG_STR("SEND_INSTALL");
+    case State::WAIT_INSTALL:    return LOG_STR("WAIT_INSTALL");
+    case State::SEND_AARQ:      return LOG_STR("SEND_AARQ");
+    case State::WAIT_AARE:      return LOG_STR("WAIT_AARE");
     case State::DATA_REQUEST:    return LOG_STR("DATA_REQUEST");
     case State::WAIT_RESPONSE:   return LOG_STR("WAIT_RESPONSE");
     case State::DATA_NEXT:       return LOG_STR("DATA_NEXT");
-    case State::SEND_RELEASE:    return LOG_STR("SEND_RELEASE");
-    case State::WAIT_RELEASE:    return LOG_STR("WAIT_RELEASE");
     case State::PUBLISH:         return LOG_STR("PUBLISH");
     case State::LISTENING:       return LOG_STR("LISTENING");
     case State::SNIFFING:        return LOG_STR("SNIFFING");
@@ -885,14 +967,14 @@ void NartisWmbusComponent::loop() {
   if (!this->is_ready() || this->state_ == State::NOT_INITIALIZED)
     return;
 
-  // Session watchdog — force back to IDLE if stuck
+  // Session watchdog — force back to IDLE if stuck (covers install+AARQ+data phases)
   if (this->state_ != State::IDLE && this->state_ != State::SNIFFING &&
-      this->state_ != State::LISTENING && this->state_ != State::INIT_RADIO &&
-      check_session_timeout_()) {
+      this->state_ != State::LISTENING && this->state_ != State::NOT_INITIALIZED &&
+      this->state_ != State::INIT_SESSION && check_session_timeout_()) {
     ESP_LOGW(TAG, "Session timeout (%ums) in state %s — aborting",
              SESSION_TIMEOUT_MS, LOG_STR_ARG(state_to_string_(state_)));
     radio_.go_standby();
-
+    associated_ = false;
     set_next_state_(State::IDLE);
     return;
   }
@@ -901,7 +983,7 @@ void NartisWmbusComponent::loop() {
     case State::IDLE:
       break;
 
-    case State::INIT_RADIO: {
+    case State::INIT_SESSION: {
       session_start_ms_ = millis();
 
       // Reset sensor states
@@ -909,20 +991,123 @@ void NartisWmbusComponent::loop() {
         pair.second->reset();
       }
 
-      system_title_valid_ = false;
       retry_count_ = 0;
+
+      // Per firmware session flow (decompiled/wmbus_install_req.c):
+      //   1. SND-IR install request (pairing beacon)
+      //   2. Wait for meter reply
+      //   3. AARQ (association request)
+      //   4. AARE (association response) → get system title
+      //   5. Encrypted data exchange (GET/SET)
+      if (associated_) {
+        // Already associated from previous cycle — skip install+AARQ, go straight to data
+        request_iter_ = sensors_.begin();
+        set_next_state_(State::DATA_REQUEST);
+      } else {
+        // Need to (re-)establish association — start with install request
+        // Per firmware: SND-IR is always sent before AARQ, even on re-connect
+        set_next_state_(State::SEND_INSTALL);
+      }
+      break;
+    }
+
+    case State::SEND_INSTALL: {
+      // Per firmware 0x101DC: send SND-IR install request (pairing beacon)
+      // This is a separate frame from AARQ — sent first to register our
+      // link-layer address with the meter. Always unencrypted.
+      ESP_LOGD(TAG, "Sending SND-IR install request (pairing beacon)");
+
+      if (!send_install_frame_()) {
+        ESP_LOGW(TAG, "Failed to send install request");
+        set_next_state_(State::IDLE);
+        break;
+      }
+
+      retry_count_ = 0;
+      if (!radio_.start_rx(channel_)) {
+        ESP_LOGW(TAG, "Failed to start RX for install reply");
+        set_next_state_(State::IDLE);
+        break;
+      }
+      start_timeout_(INSTALL_TIMEOUT_MS);
+      set_next_state_(State::WAIT_INSTALL);
+      break;
+    }
+
+    case State::WAIT_INSTALL: {
+      // Wait for meter's install reply (or timeout).
+      // Per firmware: prepare_install_rx (0xFD3C) sets up RX handler,
+      // packet_handler(1, frame_desc) processes the reply.
+      // The reply is typically RSP-UD (C=0x08) with meter identity.
+      if (check_timeout_()) {
+        radio_.stop_rx();
+        retry_count_++;
+        if (retry_count_ >= MAX_RETRIES) {
+          ESP_LOGW(TAG, "No install reply after %d retries — proceeding to AARQ anyway", MAX_RETRIES);
+          // Even without install reply, try AARQ — meter may already be paired
+          set_next_state_(State::SEND_AARQ);
+        } else {
+          ESP_LOGD(TAG, "Install reply timeout, retry %d/%d", retry_count_, MAX_RETRIES);
+          set_next_state_(State::SEND_INSTALL);
+        }
+        break;
+      }
+
+      uint8_t rf_buf[MAX_FRAME_SIZE];
+      int16_t rf_len = radio_.check_rx(rf_buf, sizeof(rf_buf));
+      if (rf_len == 0)
+        break;  // nothing yet — return to loop()
+      radio_.stop_rx();
+
+      if (rf_len < 0) {
+        // RX error — restart RX and wait more
+        radio_.start_rx(channel_);
+        break;
+      }
+
+      // Parse the install reply — strip CRCs and log header
+      uint8_t stripped[MAX_APDU_SIZE + 30];
+      uint16_t stripped_len = wmbus_frame_parse_(rf_buf, rf_len, stripped);
+      if (stripped_len >= 11) {
+        uint16_t m_field = stripped[2] | (stripped[3] << 8);
+        uint32_t serial = stripped[4] | (stripped[5] << 8) | (stripped[6] << 16) | (stripped[7] << 24);
+        char mfr[4];
+        decode_manufacturer_(m_field, mfr);
+        ESP_LOGI(TAG, "Install reply: C=0x%02X M=%s S=%08X v=%d t=0x%02X CI=0x%02X",
+                 stripped[1], mfr, serial, stripped[8], stripped[9], stripped[10]);
+      } else {
+        ESP_LOGD(TAG, "Install reply: bad frame (%d bytes)", rf_len);
+        // Restart RX and keep waiting
+        radio_.start_rx(channel_);
+        break;
+      }
+
+      // Install exchange complete — proceed to AARQ
+      ESP_LOGD(TAG, "Install exchange complete, proceeding to AARQ");
       set_next_state_(State::SEND_AARQ);
       break;
     }
 
     case State::SEND_AARQ: {
-      ESP_LOGD(TAG, "Sending AARQ (unencrypted, SND-IR)");
+      // Per firmware session sequence (decompiled/wmbus_install_req.c):
+      //   After SND-IR install, AARQ is sent in SND-NR (C=0x44) encrypted
+      //   if system title is known, or in SND-IR (C=0x46) unencrypted if not.
+      bool can_encrypt = system_title_valid_;
 
-      // AARQ is sent unencrypted via SND-IR to establish association
-      if (!transmit_dlms_(AARQ_TEMPLATE, sizeof(AARQ_TEMPLATE), WMBUS_C_SND_IR, false)) {
-        ESP_LOGW(TAG, "Failed to send AARQ");
-        set_next_state_(State::IDLE);
-        break;
+      if (can_encrypt) {
+        ESP_LOGD(TAG, "Sending AARQ (encrypted, SND-NR) — system title known");
+        if (!transmit_dlms_(AARQ_TEMPLATE, sizeof(AARQ_TEMPLATE), WMBUS_C_SND_NR, true)) {
+          ESP_LOGW(TAG, "Failed to send encrypted AARQ");
+          set_next_state_(State::IDLE);
+          break;
+        }
+      } else {
+        ESP_LOGD(TAG, "Sending AARQ (unencrypted, SND-IR) — first association");
+        if (!transmit_dlms_(AARQ_TEMPLATE, sizeof(AARQ_TEMPLATE), WMBUS_C_SND_IR, false)) {
+          ESP_LOGW(TAG, "Failed to send AARQ");
+          set_next_state_(State::IDLE);
+          break;
+        }
       }
 
       retry_count_ = 0;
@@ -976,6 +1161,7 @@ void NartisWmbusComponent::loop() {
         break;
       }
 
+      associated_ = true;
       // Start data collection from first sensor
       request_iter_ = sensors_.begin();
       set_next_state_(State::DATA_REQUEST);
@@ -984,7 +1170,7 @@ void NartisWmbusComponent::loop() {
 
     case State::DATA_REQUEST: {
       if (request_iter_ == sensors_.end()) {
-        set_next_state_(State::SEND_RELEASE);
+        set_next_state_(State::PUBLISH);
         break;
       }
 
@@ -1026,12 +1212,14 @@ void NartisWmbusComponent::loop() {
         radio_.stop_rx();
         retry_count_++;
         if (retry_count_ >= MAX_RETRIES) {
-          ESP_LOGW(TAG, "No response for OBIS %s after %d retries", current_obis_.c_str(), MAX_RETRIES);
+          ESP_LOGW(TAG, "No response for OBIS %s after %d retries — meter not responding, possibly displaced",
+                   current_obis_.c_str(), MAX_RETRIES);
           auto range = sensors_.equal_range(current_obis_);
           for (auto it = range.first; it != range.second; ++it) {
             it->second->record_failure();
           }
-          set_next_state_(State::DATA_NEXT);
+          associated_ = false;
+          set_next_state_(State::PUBLISH);
         } else {
           ESP_LOGD(TAG, "Response timeout, retry %d/%d", retry_count_, MAX_RETRIES);
           set_next_state_(State::DATA_REQUEST);
@@ -1063,6 +1251,10 @@ void NartisWmbusComponent::loop() {
       std::string text_value;
       bool is_text = false;
       if (parse_get_response_(apdu_buf_, len, value, text_value, is_text)) {
+        if (!associated_) {
+          ESP_LOGI(TAG, "Meter responding again — association restored");
+          associated_ = true;
+        }
         if (is_text) {
           ESP_LOGD(TAG, "OBIS %s = \"%s\"", current_obis_.c_str(), text_value.c_str());
         } else {
@@ -1103,46 +1295,10 @@ void NartisWmbusComponent::loop() {
       }
 
       if (request_iter_ == sensors_.end()) {
-        set_next_state_(State::SEND_RELEASE);
+        set_next_state_(State::PUBLISH);
       } else {
         set_next_state_(State::DATA_REQUEST);
       }
-      break;
-    }
-
-    case State::SEND_RELEASE: {
-      ESP_LOGD(TAG, "Sending RLRQ");
-      transmit_dlms_(RLRQ_TEMPLATE, sizeof(RLRQ_TEMPLATE), WMBUS_C_SND_NR, true);
-
-      if (!radio_.start_rx(channel_)) {
-        // Can't RX — just finish up
-    
-        set_next_state_(State::PUBLISH);
-        break;
-      }
-      start_timeout_(RELEASE_TIMEOUT_MS);
-      set_next_state_(State::WAIT_RELEASE);
-      break;
-    }
-
-    case State::WAIT_RELEASE: {
-      // Non-blocking: poll for RLRE, but don't care if it times out
-      if (check_timeout_()) {
-        radio_.stop_rx();
-    
-        set_next_state_(State::PUBLISH);
-        break;
-      }
-
-      uint8_t rf_buf[MAX_FRAME_SIZE];
-      int16_t rf_len = radio_.check_rx(rf_buf, sizeof(rf_buf));
-      if (rf_len == 0)
-        break;  // nothing yet — return to loop()
-
-      // Got something (RLRE or whatever) — done
-      radio_.stop_rx();
-  
-      set_next_state_(State::PUBLISH);
       break;
     }
 

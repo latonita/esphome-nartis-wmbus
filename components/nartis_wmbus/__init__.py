@@ -19,14 +19,13 @@ CONF_PIN_FCSB = "pin_fcsb"
 CONF_PIN_GPIO1 = "pin_gpio1"
 CONF_CHANNEL = "channel"
 CONF_DECRYPTION_KEY = "decryption_key"
-CONF_SYSTEM_TITLE = "system_title"
+CONF_METER_ID = "meter_id"
+CONF_METER_SYSTEM_TITLE = "meter_system_title"
 CONF_MODE = "mode"
+CONF_AGGRESSIVE_RECONNECT = "aggressive_reconnect"
 
 # Default AES-128 key from firmware ROM 0x23848: "ZCZfuT666iRdgPNH"
 DEFAULT_KEY = "5A435A66755436363669526467504E48"
-
-# Default DLMS system title from EEPROM factory default (placeholder)
-DEFAULT_SYSTEM_TITLE = "1122334455667788"
 
 
 def validate_key(value):
@@ -39,14 +38,21 @@ def validate_key(value):
         raise cv.Invalid("Decryption key must be hex values from 00 to FF") from exc
 
 
-def validate_system_title(value):
+def validate_meter_id(value):
+    value = cv.string_strict(value)
+    if len(value) != 12 or not value.isdigit():
+        raise cv.Invalid("Meter ID must be exactly 12 decimal digits (from meter label)")
+    return value
+
+
+def validate_meter_system_title(value):
     value = cv.string_strict(value)
     if len(value) != 16:
-        raise cv.Invalid("System title must be 16 hex characters (8 bytes)")
+        raise cv.Invalid("Meter system title must be 16 hex characters (8 bytes)")
     try:
         return [int(value[i : i + 2], 16) for i in range(0, 16, 2)]
     except ValueError as exc:
-        raise cv.Invalid("System title must be hex values from 00 to FF") from exc
+        raise cv.Invalid("Meter system title must be hex values from 00 to FF") from exc
 
 nartis_wmbus_ns = cg.esphome_ns.namespace("nartis_wmbus")
 NartisWmbusComponent = nartis_wmbus_ns.class_(
@@ -64,10 +70,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PIN_GPIO1): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_CHANNEL, default=1): cv.int_range(min=0, max=3),
             cv.Optional(CONF_DECRYPTION_KEY, default=DEFAULT_KEY): validate_key,
-            cv.Optional(CONF_SYSTEM_TITLE, default=DEFAULT_SYSTEM_TITLE): validate_system_title,
-            cv.Optional(CONF_MODE, default="session"): cv.one_of(
+            cv.Optional(CONF_METER_ID): validate_meter_id,
+            cv.Optional(CONF_METER_SYSTEM_TITLE): validate_meter_system_title,
+            cv.Optional(CONF_MODE, default="sniffer"): cv.one_of(
                 "session", "listen", "sniffer", lower=True
             ),
+            cv.Optional(CONF_AGGRESSIVE_RECONNECT, default=False): cv.boolean,
             cv.Optional(
                 CONF_UPDATE_INTERVAL, default="60s"
             ): cv.update_interval,
@@ -103,10 +111,16 @@ async def to_code(config):
     key = ", ".join(str(b) for b in config[CONF_DECRYPTION_KEY])
     cg.add(var.set_decryption_key(cg.RawExpression(f"{{{key}}}")))
 
-    title = ", ".join(str(b) for b in config[CONF_SYSTEM_TITLE])
-    cg.add(var.set_system_title(cg.RawExpression(f"{{{title}}}")))
+    if CONF_METER_ID in config:
+        cg.add(var.set_meter_id(config[CONF_METER_ID]))
+
+    if CONF_METER_SYSTEM_TITLE in config:
+        title = ", ".join(str(b) for b in config[CONF_METER_SYSTEM_TITLE])
+        cg.add(var.set_meter_system_title(cg.RawExpression(f"{{{title}}}")))
 
     mode_map = {"session": 0, "listen": 1, "sniffer": 2}
     cg.add(var.set_mode(mode_map[config[CONF_MODE]]))
+
+    cg.add(var.set_aggressive_reconnect(config[CONF_AGGRESSIVE_RECONNECT]))
 
     cg.add(var.set_update_interval(config[CONF_UPDATE_INTERVAL]))
