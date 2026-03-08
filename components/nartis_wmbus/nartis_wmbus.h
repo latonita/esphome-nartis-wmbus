@@ -8,9 +8,9 @@
 #include <cstring>
 
 #include "cmt2300a.h"
-#include "nartis_wmbus_dlms.h"
-#include "nartis_wmbus_protocol.h"
-#include "nartis_wmbus_registry.h"
+#include "dlms_helpers.h"
+#include "wmbus_protocol.h"
+#include "sensors_registry.h"
 #include "nartis_wmbus_sensor.h"
 
 namespace esphome::nartis_wmbus {

@@ -1,4 +1,4 @@
-#include "nartis_wmbus_protocol.h"
+#include "wmbus_protocol.h"
 
 #include "esphome/core/log.h"
 

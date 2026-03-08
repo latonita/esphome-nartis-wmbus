@@ -1,4 +1,4 @@
-#include "nartis_wmbus_registry.h"
+#include "sensors_registry.h"
 
 #include <cstdio>
 #include <algorithm>
