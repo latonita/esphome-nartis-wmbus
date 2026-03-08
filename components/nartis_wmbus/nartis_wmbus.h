@@ -13,8 +13,7 @@
 #include "cmt2300a.h"
 #include "nartis_wmbus_sensor.h"
 
-namespace esphome {
-namespace nartis_wmbus {
+namespace esphome::nartis_wmbus {
 
 // ============================================================================
 // DLMS A-XDR Data Type Tags (IEC 62056, Blue Book Table 2)
@@ -134,20 +133,23 @@ class NartisWmbusComponent : public PollingComponent {
   float get_setup_priority() const override { return setup_priority::DATA; }
 
   // Pin setters (from Python config)
-  void set_pin_sdio(GPIOPin *pin) { pin_sdio_ = pin; }
-  void set_pin_sclk(GPIOPin *pin) { pin_sclk_ = pin; }
-  void set_pin_csb(GPIOPin *pin) { pin_csb_ = pin; }
-  void set_pin_fcsb(GPIOPin *pin) { pin_fcsb_ = pin; }
-  void set_pin_gpio1(InternalGPIOPin *pin) { pin_gpio1_ = pin; }
-  void set_channel(uint8_t ch) { channel_ = ch; }
-  void set_decryption_key(const std::array<uint8_t, 16> &key) { decryption_key_ = key; }
-  void set_meter_id(const std::string &id) { meter_id_ = id; }
-  void set_meter_system_title(const std::array<uint8_t, 8> &title) {
-    configured_meter_sys_title_ = title;
-    meter_sys_title_configured_ = true;
+  void set_pin_sdio(GPIOPin *pin) { this->pin_sdio_ = pin; }
+  void set_pin_sclk(GPIOPin *pin) { this->pin_sclk_ = pin; }
+  void set_pin_csb(GPIOPin *pin) { this->pin_csb_ = pin; }
+  void set_pin_fcsb(GPIOPin *pin) { this->pin_fcsb_ = pin; }
+  void set_pin_gpio1(InternalGPIOPin *pin) { this->pin_gpio1_ = pin; }
+  void set_channel(uint8_t ch) { this->channel_ = ch; }
+  void set_decryption_key(const std::array<uint8_t, 16> &key) { this->decryption_key_ = key; }
+  void set_meter_id(const std::string &id) {
+    strncpy(this->meter_id_, id.c_str(), sizeof(this->meter_id_) - 1);
+    this->meter_id_[sizeof(this->meter_id_) - 1] = '\0';
   }
-  void set_mode(uint8_t m) { mode_ = static_cast<Mode>(m); }
-  void set_aggressive_reconnect(bool v) { aggressive_reconnect_ = v; }
+  void set_meter_system_title(const std::array<uint8_t, 8> &title) {
+    this->configured_meter_sys_title_ = title;
+    this->meter_sys_title_configured_ = true;
+  }
+  void set_mode(uint8_t m) { this->mode_ = static_cast<Mode>(m); }
+  void set_aggressive_reconnect(bool v) { this->aggressive_reconnect_ = v; }
 
   void register_sensor(NartisWmbusSensorBase *sensor);
 
@@ -177,12 +179,12 @@ class NartisWmbusComponent : public PollingComponent {
     uint32_t timeout_ms{0};
   } wait_{};
 
-  bool check_timeout_() const { return millis() - wait_.start_time >= wait_.timeout_ms; }
-  void start_timeout_(uint32_t ms) { wait_.start_time = millis(); wait_.timeout_ms = ms; }
+  bool check_timeout_() const { return millis() - this->wait_.start_time >= this->wait_.timeout_ms; }
+  void start_timeout_(uint32_t ms) { this->wait_.start_time = millis(); this->wait_.timeout_ms = ms; }
 
   // Session watchdog
   uint32_t session_start_ms_{0};
-  bool check_session_timeout_() const { return millis() - session_start_ms_ >= SESSION_TIMEOUT_MS; }
+  bool check_session_timeout_() const { return millis() - this->session_start_ms_ >= SESSION_TIMEOUT_MS; }
 
   // Radio
   CMT2300A radio_;
@@ -198,7 +200,7 @@ class NartisWmbusComponent : public PollingComponent {
   // Encryption key and system titles
   std::array<uint8_t, 16> decryption_key_{};
   std::array<uint8_t, 8> system_title_{};  // Our system title (auto-generated from MAC)
-  std::string meter_id_;                    // 12-digit meter serial from label (optional, for logging)
+  char meter_id_[13]{};                      // 12-digit meter serial from label (optional, for logging)
   std::array<uint8_t, 8> configured_meter_sys_title_{};  // Meter's system title from YAML
   bool meter_sys_title_configured_{false};
 
@@ -213,7 +215,7 @@ class NartisWmbusComponent : public PollingComponent {
   // Sensors
   SensorMap sensors_;
   SensorMap::iterator request_iter_{};
-  std::string current_obis_;
+  const char *current_obis_{nullptr};
 
   // Buffers
   uint8_t tx_buf_[MAX_FRAME_SIZE]{};
@@ -248,7 +250,7 @@ class NartisWmbusComponent : public PollingComponent {
                                uint8_t attr, uint8_t *out);
   bool parse_aare_(const uint8_t *data, uint16_t len);
   bool parse_get_response_(const uint8_t *data, uint16_t len,
-                           float &value, std::string &text_value, bool &is_text);
+                           float &value, char *text_buf, uint16_t text_buf_size, bool &is_text);
 
   // W-MBus Install Request (SND-IR pairing beacon, per firmware 0x101DC)
   void build_install_payload_(uint8_t out[INSTALL_PAYLOAD_SIZE]);
@@ -283,5 +285,4 @@ class NartisWmbusComponent : public PollingComponent {
   static const LogString *state_to_string_(State state);
 };
 
-}  // namespace nartis_wmbus
-}  // namespace esphome
+}  // namespace esphome::nartis_wmbus

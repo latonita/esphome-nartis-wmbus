@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.const import CONF_ID, CONF_UPDATE_INTERVAL
+from esphome.const import CONF_ID
 
 CODEOWNERS = ["@latonita"]
 
@@ -76,12 +76,9 @@ CONFIG_SCHEMA = cv.All(
                 "session", "listen", "sniffer", lower=True
             ),
             cv.Optional(CONF_AGGRESSIVE_RECONNECT, default=False): cv.boolean,
-            cv.Optional(
-                CONF_UPDATE_INTERVAL, default="60s"
-            ): cv.update_interval,
         }
     )
-    .extend(cv.COMPONENT_SCHEMA),
+    .extend(cv.polling_component_schema("60s")),
     cv.only_on_esp32,
 )
 
@@ -122,5 +119,3 @@ async def to_code(config):
     cg.add(var.set_mode(mode_map[config[CONF_MODE]]))
 
     cg.add(var.set_aggressive_reconnect(config[CONF_AGGRESSIVE_RECONNECT]))
-
-    cg.add(var.set_update_interval(config[CONF_UPDATE_INTERVAL]))

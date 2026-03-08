@@ -12,8 +12,7 @@
 #include <freertos/task.h>
 #endif
 
-namespace esphome {
-namespace nartis_wmbus {
+namespace esphome::nartis_wmbus {
 
 // Register bank sizes (96 total)
 static constexpr uint8_t CMT_BANK_CUS_CMT = 12;        // regs 0x00-0x0B
@@ -95,11 +94,11 @@ struct RxPacket {
 class CMT2300A {
  public:
   void set_pins(GPIOPin *sdio, GPIOPin *sclk, GPIOPin *csb, GPIOPin *fcsb, InternalGPIOPin *gpio1) {
-    pin_sdio_ = sdio;
-    pin_sclk_ = sclk;
-    pin_csb_ = csb;
-    pin_fcsb_ = fcsb;
-    pin_gpio1_ = gpio1;
+    this->pin_sdio_ = sdio;
+    this->pin_sclk_ = sclk;
+    this->pin_csb_ = csb;
+    this->pin_fcsb_ = fcsb;
+    this->pin_gpio1_ = gpio1;
   }
 
   bool init(uint8_t channel);
@@ -125,7 +124,7 @@ class CMT2300A {
 
   bool go_standby();
 
-  bool has_isr() const { return isr_enabled_; }
+  bool has_isr() const { return this->isr_enabled_; }
 
  protected:
   void spi_write_byte_(uint8_t byte);
@@ -161,5 +160,4 @@ class CMT2300A {
   bool rx_active_{false};
 };
 
-}  // namespace nartis_wmbus
-}  // namespace esphome
+}  // namespace esphome::nartis_wmbus

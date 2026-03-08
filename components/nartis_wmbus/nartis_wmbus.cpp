@@ -11,8 +11,7 @@
 #include <cstring>
 #include <algorithm>
 
-namespace esphome {
-namespace nartis_wmbus {
+namespace esphome::nartis_wmbus {
 
 static const char *const TAG = "nartis_wmbus";
 
@@ -102,7 +101,7 @@ uint16_t NartisWmbusComponent::wmbus_frame_build_(uint8_t c_field, uint8_t ci_fi
   // TPL short header (4 bytes) — firmware buf[0x0B..0x0E]
   raw[raw_len++] = c_field;      // C-field copy
   raw[raw_len++] = 0x7A;         // CI-field copy (always 0x7A)
-  raw[raw_len++] = access_nr_;   // Access number
+  raw[raw_len++] = this->access_nr_;   // Access number
   raw[raw_len++] = 0x00;         // Status byte
 
   // Payload (encrypted SC+pad+IC+ciphertext, or plain APDU)
@@ -296,7 +295,7 @@ uint16_t NartisWmbusComponent::wmbus_encrypt_(const uint8_t *dlms_apdu, uint16_t
   out[pos++] = 0x00;
 
   // Invocation Counter (4 bytes, big-endian) — firmware buf[0x11..0x14]
-  uint32_t ic = invocation_counter_;
+  uint32_t ic = this->invocation_counter_;
   out[pos++] = (ic >> 24) & 0xFF;
   out[pos++] = (ic >> 16) & 0xFF;
   out[pos++] = (ic >> 8) & 0xFF;
@@ -306,18 +305,18 @@ uint16_t NartisWmbusComponent::wmbus_encrypt_(const uint8_t *dlms_apdu, uint16_t
   // Per firmware: TX encrypt uses CIU's own system title (RAM 0x20005ABC)
   //               RX decrypt uses meter's system title (RAM 0x20005924)
   uint8_t nonce[12];
-  memcpy(nonce, system_title_.data(), 8);
+  memcpy(nonce, this->system_title_.data(), 8);
   nonce[8] = (ic >> 24) & 0xFF;
   nonce[9] = (ic >> 16) & 0xFF;
   nonce[10] = (ic >> 8) & 0xFF;
   nonce[11] = ic & 0xFF;
 
-  invocation_counter_++;
+  this->invocation_counter_++;
 
   // Encrypt DLMS APDU — firmware buf[0x15..] = ciphertext
   // AAD = SC byte only (1 byte) per firmware gcm_decrypt_service (0x1B300)
   uint8_t sc_aad = WMBUS_SC_GCM;
-  if (!aes_gcm_crypt_(true, decryption_key_.data(), nonce, &sc_aad, 1, dlms_apdu, apdu_len, &out[pos])) {
+  if (!this->aes_gcm_crypt_(true, this->decryption_key_.data(), nonce, &sc_aad, 1, dlms_apdu, apdu_len, &out[pos])) {
     return 0;
   }
   pos += apdu_len;
@@ -364,7 +363,7 @@ uint16_t NartisWmbusComponent::wmbus_decrypt_(const uint8_t *enc_payload, uint16
 
   // Build GCM nonce: meter_system_title[8] || IC[4]
   uint8_t nonce[12];
-  memcpy(nonce, meter_system_title_, 8);
+  memcpy(nonce, this->meter_system_title_, 8);
   nonce[8] = (ic >> 24) & 0xFF;
   nonce[9] = (ic >> 16) & 0xFF;
   nonce[10] = (ic >> 8) & 0xFF;
@@ -384,7 +383,7 @@ uint16_t NartisWmbusComponent::wmbus_decrypt_(const uint8_t *enc_payload, uint16
   }
 
   // AAD = SC byte only (1 byte) per firmware gcm_decrypt_service (0x1B300)
-  if (!aes_gcm_crypt_(false, decryption_key_.data(), nonce, &sc, 1,
+  if (!this->aes_gcm_crypt_(false, this->decryption_key_.data(), nonce, &sc, 1,
                        &enc_payload[pos], cipher_len, dlms_out, tag_ptr, tag_len)) {
     return 0;
   }
@@ -462,20 +461,20 @@ bool NartisWmbusComponent::parse_aare_(const uint8_t *data, uint16_t len) {
       // responding-AP-title — contains meter's system title
       // Format: A4 0A 04 08 <8 bytes system title>
       if (tag_len >= 10 && data[pos] == 0x04 && data[pos + 1] == 0x08) {
-        memcpy(meter_system_title_, &data[pos + 2], 8);
-        system_title_valid_ = true;
+        memcpy(this->meter_system_title_, &data[pos + 2], 8);
+        this->system_title_valid_ = true;
         found_system_title = true;
         ESP_LOGI(TAG, "************************************************************");
         ESP_LOGI(TAG, "  Meter system title: %02X%02X%02X%02X%02X%02X%02X%02X",
-                 meter_system_title_[0], meter_system_title_[1],
-                 meter_system_title_[2], meter_system_title_[3],
-                 meter_system_title_[4], meter_system_title_[5],
-                 meter_system_title_[6], meter_system_title_[7]);
+                 this->meter_system_title_[0], this->meter_system_title_[1],
+                 this->meter_system_title_[2], this->meter_system_title_[3],
+                 this->meter_system_title_[4], this->meter_system_title_[5],
+                 this->meter_system_title_[6], this->meter_system_title_[7]);
         ESP_LOGI(TAG, "  Add to YAML:  meter_system_title: \"%02X%02X%02X%02X%02X%02X%02X%02X\"",
-                 meter_system_title_[0], meter_system_title_[1],
-                 meter_system_title_[2], meter_system_title_[3],
-                 meter_system_title_[4], meter_system_title_[5],
-                 meter_system_title_[6], meter_system_title_[7]);
+                 this->meter_system_title_[0], this->meter_system_title_[1],
+                 this->meter_system_title_[2], this->meter_system_title_[3],
+                 this->meter_system_title_[4], this->meter_system_title_[5],
+                 this->meter_system_title_[6], this->meter_system_title_[7]);
         ESP_LOGI(TAG, "************************************************************");
       }
     }
@@ -498,7 +497,7 @@ bool NartisWmbusComponent::parse_aare_(const uint8_t *data, uint16_t len) {
 // Returns true on success. Sets is_text=true and fills text_value for string types,
 // otherwise fills numeric value.
 static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint16_t avail,
-                                     float &value, std::string &text_value, bool &is_text) {
+                                     float &value, char *text_buf, uint16_t text_buf_size, bool &is_text) {
   is_text = false;
 
   auto be16 = [](const uint8_t *p) -> uint16_t { return (uint16_t)((p[0] << 8) | p[1]); };
@@ -578,28 +577,19 @@ static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint
       is_text = true;
       if (slen == 12) {
         // DLMS datetime: YYYY-MM-DD HH:MM:SS
-        char buf[24];
-        snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+        snprintf(text_buf, text_buf_size, "%04d-%02d-%02d %02d:%02d:%02d",
                  be16(p), p[2], p[3], p[5], p[6], p[7]);
-        text_value = buf;
       } else if (slen == 5) {
         // DLMS date: YYYY-MM-DD
-        char buf[12];
-        snprintf(buf, sizeof(buf), "%04d-%02d-%02d", be16(p), p[2], p[3]);
-        text_value = buf;
+        snprintf(text_buf, text_buf_size, "%04d-%02d-%02d", be16(p), p[2], p[3]);
       } else if (slen == 4) {
         // DLMS time: HH:MM:SS
-        char buf[12];
-        snprintf(buf, sizeof(buf), "%02d:%02d:%02d", p[0], p[1], p[2]);
-        text_value = buf;
+        snprintf(text_buf, text_buf_size, "%02d:%02d:%02d", p[0], p[1], p[2]);
       } else {
         // Generic octet-string → hex
-        char hex[3];
-        text_value.clear();
-        text_value.reserve(slen * 2);
-        for (uint8_t i = 0; i < slen; i++) {
-          snprintf(hex, sizeof(hex), "%02X", p[i]);
-          text_value += hex;
+        uint16_t pos = 0;
+        for (uint8_t i = 0; i < slen && pos + 2 < text_buf_size; i++) {
+          pos += snprintf(text_buf + pos, text_buf_size - pos, "%02X", p[i]);
         }
       }
       return true;
@@ -610,7 +600,11 @@ static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint
       uint8_t slen = data[0];
       if (avail < 1u + slen) break;
       is_text = true;
-      text_value = std::string(reinterpret_cast<const char *>(&data[1]), slen);
+      uint8_t copy_len = slen;
+      if (copy_len >= text_buf_size)
+        copy_len = text_buf_size - 1;
+      memcpy(text_buf, &data[1], copy_len);
+      text_buf[copy_len] = '\0';
       return true;
     }
 
@@ -622,8 +616,8 @@ static bool dlms_decode_data_element(uint8_t type_tag, const uint8_t *data, uint
 }
 
 bool NartisWmbusComponent::parse_get_response_(const uint8_t *data, uint16_t len,
-                                                float &value, std::string &text_value,
-                                                bool &is_text) {
+                                                float &value, char *text_buf,
+                                                uint16_t text_buf_size, bool &is_text) {
   is_text = false;
 
   if (len < 3 || data[0] != DLMS_TAG_GET_RESPONSE) {
@@ -650,7 +644,7 @@ bool NartisWmbusComponent::parse_get_response_(const uint8_t *data, uint16_t len
   if (pos >= len) return false;
   uint8_t type_tag = data[pos++];
 
-  if (!dlms_decode_data_element(type_tag, &data[pos], len - pos, value, text_value, is_text)) {
+  if (!dlms_decode_data_element(type_tag, &data[pos], len - pos, value, text_buf, text_buf_size, is_text)) {
     ESP_LOGD(TAG, "GET.response: failed to decode DLMS type 0x%02X", type_tag);
     return false;
   }
@@ -677,15 +671,15 @@ void NartisWmbusComponent::build_install_payload_(uint8_t out[INSTALL_PAYLOAD_SI
   //   - With real data: meter serial + padding, right-aligned
   //
   // For our ESP32 reader: use meter_id if configured, else '0' padding
-  if (!meter_id_.empty()) {
+  if (this->meter_id_[0] != '\0') {
     // Right-align meter_id in 13 bytes, front-pad with '0'
     uint8_t pad = INSTALL_PAYLOAD_SIZE;
-    uint8_t copy_len = meter_id_.size();
+    uint8_t copy_len = strlen(this->meter_id_);
     if (copy_len > INSTALL_PAYLOAD_SIZE)
       copy_len = INSTALL_PAYLOAD_SIZE;
     pad -= copy_len;
     memset(out, 0x30, pad);
-    memcpy(out + pad, meter_id_.c_str(), copy_len);
+    memcpy(out + pad, this->meter_id_, copy_len);
   } else {
     // Factory default: 13 bytes of ASCII '0'
     memset(out, 0x30, INSTALL_PAYLOAD_SIZE);
@@ -694,18 +688,18 @@ void NartisWmbusComponent::build_install_payload_(uint8_t out[INSTALL_PAYLOAD_SI
 
 bool NartisWmbusComponent::send_install_frame_() {
   uint8_t payload[INSTALL_PAYLOAD_SIZE];
-  build_install_payload_(payload);
+  this->build_install_payload_(payload);
 
   uint8_t frame_buf[MAX_FRAME_SIZE];
 
   // Increment access number (per firmware frame_set_mode 0xBAF4)
-  access_nr_++;
+  this->access_nr_++;
 
   // Build SND-IR frame with install payload (always unencrypted)
-  uint16_t frame_len = wmbus_frame_build_(WMBUS_C_SND_IR, 0x7A, payload, INSTALL_PAYLOAD_SIZE, frame_buf);
+  uint16_t frame_len = this->wmbus_frame_build_(WMBUS_C_SND_IR, 0x7A, payload, INSTALL_PAYLOAD_SIZE, frame_buf);
 
   ESP_LOGD(TAG, "Sending SND-IR install request (%d bytes)", frame_len);
-  return radio_.send_packet(frame_buf, frame_len, channel_);
+  return this->radio_.send_packet(frame_buf, frame_len, this->channel_);
 }
 
 // ============================================================================
@@ -717,20 +711,20 @@ bool NartisWmbusComponent::transmit_dlms_(const uint8_t *apdu, uint16_t apdu_len
   uint8_t frame_buf[MAX_FRAME_SIZE];
 
   // Increment access number for each TX (per firmware frame_set_mode 0xBAF4)
-  access_nr_++;
+  this->access_nr_++;
 
-  if (encrypt && system_title_valid_) {
+  if (encrypt && this->system_title_valid_) {
     // Encrypted: wmbus_encrypt_ produces SC + pad + IC + ciphertext
     uint8_t enc_payload[MAX_APDU_SIZE];
-    uint16_t enc_len = wmbus_encrypt_(apdu, apdu_len, enc_payload);
+    uint16_t enc_len = this->wmbus_encrypt_(apdu, apdu_len, enc_payload);
     if (enc_len == 0)
       return false;
-    uint16_t frame_len = wmbus_frame_build_(c_field, WMBUS_CI_ENC, enc_payload, enc_len, frame_buf);
-    return radio_.send_packet(frame_buf, frame_len, channel_);
+    uint16_t frame_len = this->wmbus_frame_build_(c_field, WMBUS_CI_ENC, enc_payload, enc_len, frame_buf);
+    return this->radio_.send_packet(frame_buf, frame_len, this->channel_);
   } else {
     // Unencrypted: plain APDU goes directly after TPL header
-    uint16_t frame_len = wmbus_frame_build_(c_field, WMBUS_CI_PLAIN, apdu, apdu_len, frame_buf);
-    return radio_.send_packet(frame_buf, frame_len, channel_);
+    uint16_t frame_len = this->wmbus_frame_build_(c_field, WMBUS_CI_PLAIN, apdu, apdu_len, frame_buf);
+    return this->radio_.send_packet(frame_buf, frame_len, this->channel_);
   }
 }
 
@@ -739,7 +733,7 @@ uint16_t NartisWmbusComponent::process_rx_frame_(const uint8_t *rf_buf, uint16_t
                                                    uint8_t *dlms_out) {
   // Strip W-MBus CRC blocks
   uint8_t stripped[MAX_APDU_SIZE + 30];
-  uint16_t stripped_len = wmbus_frame_parse_(rf_buf, rf_len, stripped);
+  uint16_t stripped_len = this->wmbus_frame_parse_(rf_buf, rf_len, stripped);
   if (stripped_len == 0) {
     ESP_LOGW(TAG, "Failed to parse W-MBus frame");
     return 0;
@@ -782,7 +776,7 @@ uint16_t NartisWmbusComponent::process_rx_frame_(const uint8_t *rf_buf, uint16_t
 
     // Check if encrypted: SC byte == 0x94 (AES-GCM)
     if (data_after_tpl[0] == WMBUS_SC_GCM) {
-      return wmbus_decrypt_(data_after_tpl, data_len, dlms_out);
+      return this->wmbus_decrypt_(data_after_tpl, data_len, dlms_out);
     } else {
       // Plaintext DLMS APDU (e.g. AARE response)
       memcpy(dlms_out, data_after_tpl, data_len);
@@ -795,7 +789,7 @@ uint16_t NartisWmbusComponent::process_rx_frame_(const uint8_t *rf_buf, uint16_t
   uint16_t payload_len = stripped_len - DLL_HDR_LEN;
 
   if (ci_field == WMBUS_CI_ENC) {
-    return wmbus_decrypt_(payload, payload_len, dlms_out);
+    return this->wmbus_decrypt_(payload, payload_len, dlms_out);
   } else if (ci_field == WMBUS_CI_PLAIN) {
     memcpy(dlms_out, payload, payload_len);
     return payload_len;
@@ -808,10 +802,10 @@ uint16_t NartisWmbusComponent::process_rx_frame_(const uint8_t *rf_buf, uint16_t
 // Blocking receive — only used by sniffer mode
 uint16_t NartisWmbusComponent::receive_dlms_(uint8_t *dlms_out, uint32_t timeout_ms) {
   uint8_t rf_buf[MAX_FRAME_SIZE];
-  uint16_t rf_len = radio_.receive_packet(rf_buf, sizeof(rf_buf), timeout_ms, channel_);
+  uint16_t rf_len = this->radio_.receive_packet(rf_buf, sizeof(rf_buf), timeout_ms, this->channel_);
   if (rf_len == 0)
     return 0;
-  return process_rx_frame_(rf_buf, rf_len, dlms_out);
+  return this->process_rx_frame_(rf_buf, rf_len, dlms_out);
 }
 
 // Invocation counter starts at 0 each boot — no NVS persistence needed.
@@ -836,10 +830,10 @@ void NartisWmbusComponent::setup() {
   // Auto-generate our system title from ESP32 MAC: 'E' 'S' + 6 MAC bytes
   uint8_t mac[6];
   get_mac_address_raw(mac);
-  system_title_ = {'E', 'S', mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]};
+  this->system_title_ = {'E', 'S', mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]};
 
   // Initialize radio
-  radio_.set_pins(pin_sdio_, pin_sclk_, pin_csb_, pin_fcsb_, pin_gpio1_);
+  this->radio_.set_pins(this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_);
 
   this->set_timeout(2000, [this]() {
     if (!this->radio_.init(this->channel_)) {
@@ -880,64 +874,64 @@ void NartisWmbusComponent::setup() {
 
 void NartisWmbusComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "Nartis W-MBus:");
-  ESP_LOGCONFIG(TAG, "  Channel: %d (%.3f MHz)", channel_,
-                CMT2300A_FREQ_MHZ[channel_ < 4 ? channel_ : 1]);
+  ESP_LOGCONFIG(TAG, "  Channel: %d (%.3f MHz)", this->channel_,
+                CMT2300A_FREQ_MHZ[this->channel_ < 4 ? this->channel_ : 1]);
   ESP_LOGCONFIG(TAG, "  AES Key: %02X%02X%02X%02X...%02X%02X%02X%02X",
-                decryption_key_[0], decryption_key_[1], decryption_key_[2], decryption_key_[3],
-                decryption_key_[12], decryption_key_[13], decryption_key_[14], decryption_key_[15]);
+                this->decryption_key_[0], this->decryption_key_[1], this->decryption_key_[2], this->decryption_key_[3],
+                this->decryption_key_[12], this->decryption_key_[13], this->decryption_key_[14], this->decryption_key_[15]);
   ESP_LOGCONFIG(TAG, "  Our System Title: %02X%02X%02X%02X%02X%02X%02X%02X (from MAC)",
-                system_title_[0], system_title_[1], system_title_[2], system_title_[3],
-                system_title_[4], system_title_[5], system_title_[6], system_title_[7]);
-  if (!meter_id_.empty())
-    ESP_LOGCONFIG(TAG, "  Meter ID: %s", meter_id_.c_str());
-  if (meter_sys_title_configured_)
+                this->system_title_[0], this->system_title_[1], this->system_title_[2], this->system_title_[3],
+                this->system_title_[4], this->system_title_[5], this->system_title_[6], this->system_title_[7]);
+  if (this->meter_id_[0] != '\0')
+    ESP_LOGCONFIG(TAG, "  Meter ID: %s", this->meter_id_);
+  if (this->meter_sys_title_configured_)
     ESP_LOGCONFIG(TAG, "  Meter System Title: %02X%02X%02X%02X%02X%02X%02X%02X",
-                  configured_meter_sys_title_[0], configured_meter_sys_title_[1],
-                  configured_meter_sys_title_[2], configured_meter_sys_title_[3],
-                  configured_meter_sys_title_[4], configured_meter_sys_title_[5],
-                  configured_meter_sys_title_[6], configured_meter_sys_title_[7]);
+                  this->configured_meter_sys_title_[0], this->configured_meter_sys_title_[1],
+                  this->configured_meter_sys_title_[2], this->configured_meter_sys_title_[3],
+                  this->configured_meter_sys_title_[4], this->configured_meter_sys_title_[5],
+                  this->configured_meter_sys_title_[6], this->configured_meter_sys_title_[7]);
   else
     ESP_LOGCONFIG(TAG, "  Meter System Title: not configured (will obtain from AARE)");
   ESP_LOGCONFIG(TAG, "  DLMS Password: %s", DLMS_PASSWORD);
   ESP_LOGCONFIG(TAG, "  Client SAP: 0x%02X", DLMS_CLIENT_SAP);
-  ESP_LOGCONFIG(TAG, "  Invocation Counter: %u", invocation_counter_);
-  ESP_LOGCONFIG(TAG, "  Mode: %s", LOG_STR_ARG(mode_to_string_(mode_)));
-  ESP_LOGCONFIG(TAG, "  Aggressive Reconnect: %s", YESNO(aggressive_reconnect_));
-  ESP_LOGCONFIG(TAG, "  Sensors: %d", sensors_.size());
+  ESP_LOGCONFIG(TAG, "  Invocation Counter: %u", this->invocation_counter_);
+  ESP_LOGCONFIG(TAG, "  Mode: %s", LOG_STR_ARG(mode_to_string_(this->mode_)));
+  ESP_LOGCONFIG(TAG, "  Aggressive Reconnect: %s", YESNO(this->aggressive_reconnect_));
+  ESP_LOGCONFIG(TAG, "  Sensors: %d", this->sensors_.size());
   LOG_UPDATE_INTERVAL(this);
 }
 
 void NartisWmbusComponent::update() {
-  if (mode_ == Mode::SNIFFER) {
-    ESP_LOGD(TAG, "Sniffer: %u packets captured so far", sniffer_packet_count_);
+  if (this->mode_ == Mode::SNIFFER) {
+    ESP_LOGD(TAG, "Sniffer: %u packets captured so far", this->sniffer_packet_count_);
     return;
   }
 
-  if (mode_ == Mode::LISTEN) {
-    ESP_LOGD(TAG, "Listen: %u packets received", listen_packet_count_);
+  if (this->mode_ == Mode::LISTEN) {
+    ESP_LOGD(TAG, "Listen: %u packets received", this->listen_packet_count_);
     // TODO: publish sensor values once push data parsing is implemented
     return;
   }
 
   if (this->state_ != State::IDLE) {
-    ESP_LOGD(TAG, "Update skipped — not idle (state=%s)", LOG_STR_ARG(state_to_string_(state_)));
+    ESP_LOGD(TAG, "Update skipped — not idle (state=%s)", LOG_STR_ARG(state_to_string_(this->state_)));
     return;
   }
 
-  if (sensors_.empty()) {
+  if (this->sensors_.empty()) {
     ESP_LOGW(TAG, "No sensors configured");
     return;
   }
 
   ESP_LOGD(TAG, "Starting data collection session");
-  set_next_state_(State::INIT_SESSION);
+  this->set_next_state_(State::INIT_SESSION);
 }
 
 void NartisWmbusComponent::set_next_state_(State next_state) {
-  if (state_ != next_state) {
-    ESP_LOGD(TAG, "State: %s -> %s", LOG_STR_ARG(state_to_string_(state_)), LOG_STR_ARG(state_to_string_(next_state)));
+  if (this->state_ != next_state) {
+    ESP_LOGD(TAG, "State: %s -> %s", LOG_STR_ARG(state_to_string_(this->state_)), LOG_STR_ARG(state_to_string_(next_state)));
   }
-  state_ = next_state;
+  this->state_ = next_state;
 }
 
 const LogString *NartisWmbusComponent::state_to_string_(State state) {
@@ -970,12 +964,12 @@ void NartisWmbusComponent::loop() {
   // Session watchdog — force back to IDLE if stuck (covers install+AARQ+data phases)
   if (this->state_ != State::IDLE && this->state_ != State::SNIFFING &&
       this->state_ != State::LISTENING && this->state_ != State::NOT_INITIALIZED &&
-      this->state_ != State::INIT_SESSION && check_session_timeout_()) {
+      this->state_ != State::INIT_SESSION && this->check_session_timeout_()) {
     ESP_LOGW(TAG, "Session timeout (%ums) in state %s — aborting",
-             SESSION_TIMEOUT_MS, LOG_STR_ARG(state_to_string_(state_)));
-    radio_.go_standby();
-    associated_ = false;
-    set_next_state_(State::IDLE);
+             SESSION_TIMEOUT_MS, LOG_STR_ARG(state_to_string_(this->state_)));
+    this->radio_.go_standby();
+    this->associated_ = false;
+    this->set_next_state_(State::IDLE);
     return;
   }
 
@@ -984,14 +978,14 @@ void NartisWmbusComponent::loop() {
       break;
 
     case State::INIT_SESSION: {
-      session_start_ms_ = millis();
+      this->session_start_ms_ = millis();
 
       // Reset sensor states
-      for (auto &pair : sensors_) {
+      for (auto &pair : this->sensors_) {
         pair.second->reset();
       }
 
-      retry_count_ = 0;
+      this->retry_count_ = 0;
 
       // Per firmware session flow (decompiled/wmbus_install_req.c):
       //   1. SND-IR install request (pairing beacon)
@@ -999,14 +993,14 @@ void NartisWmbusComponent::loop() {
       //   3. AARQ (association request)
       //   4. AARE (association response) → get system title
       //   5. Encrypted data exchange (GET/SET)
-      if (associated_) {
+      if (this->associated_) {
         // Already associated from previous cycle — skip install+AARQ, go straight to data
-        request_iter_ = sensors_.begin();
-        set_next_state_(State::DATA_REQUEST);
+        this->request_iter_ = this->sensors_.begin();
+        this->set_next_state_(State::DATA_REQUEST);
       } else {
         // Need to (re-)establish association — start with install request
         // Per firmware: SND-IR is always sent before AARQ, even on re-connect
-        set_next_state_(State::SEND_INSTALL);
+        this->set_next_state_(State::SEND_INSTALL);
       }
       break;
     }
@@ -1017,20 +1011,20 @@ void NartisWmbusComponent::loop() {
       // link-layer address with the meter. Always unencrypted.
       ESP_LOGD(TAG, "Sending SND-IR install request (pairing beacon)");
 
-      if (!send_install_frame_()) {
+      if (!this->send_install_frame_()) {
         ESP_LOGW(TAG, "Failed to send install request");
-        set_next_state_(State::IDLE);
+        this->set_next_state_(State::IDLE);
         break;
       }
 
-      retry_count_ = 0;
-      if (!radio_.start_rx(channel_)) {
+      this->retry_count_ = 0;
+      if (!this->radio_.start_rx(this->channel_)) {
         ESP_LOGW(TAG, "Failed to start RX for install reply");
-        set_next_state_(State::IDLE);
+        this->set_next_state_(State::IDLE);
         break;
       }
-      start_timeout_(INSTALL_TIMEOUT_MS);
-      set_next_state_(State::WAIT_INSTALL);
+      this->start_timeout_(INSTALL_TIMEOUT_MS);
+      this->set_next_state_(State::WAIT_INSTALL);
       break;
     }
 
@@ -1039,35 +1033,35 @@ void NartisWmbusComponent::loop() {
       // Per firmware: prepare_install_rx (0xFD3C) sets up RX handler,
       // packet_handler(1, frame_desc) processes the reply.
       // The reply is typically RSP-UD (C=0x08) with meter identity.
-      if (check_timeout_()) {
-        radio_.stop_rx();
-        retry_count_++;
-        if (retry_count_ >= MAX_RETRIES) {
+      if (this->check_timeout_()) {
+        this->radio_.stop_rx();
+        this->retry_count_++;
+        if (this->retry_count_ >= MAX_RETRIES) {
           ESP_LOGW(TAG, "No install reply after %d retries — proceeding to AARQ anyway", MAX_RETRIES);
           // Even without install reply, try AARQ — meter may already be paired
-          set_next_state_(State::SEND_AARQ);
+          this->set_next_state_(State::SEND_AARQ);
         } else {
-          ESP_LOGD(TAG, "Install reply timeout, retry %d/%d", retry_count_, MAX_RETRIES);
-          set_next_state_(State::SEND_INSTALL);
+          ESP_LOGD(TAG, "Install reply timeout, retry %d/%d", this->retry_count_, MAX_RETRIES);
+          this->set_next_state_(State::SEND_INSTALL);
         }
         break;
       }
 
       uint8_t rf_buf[MAX_FRAME_SIZE];
-      int16_t rf_len = radio_.check_rx(rf_buf, sizeof(rf_buf));
+      int16_t rf_len = this->radio_.check_rx(rf_buf, sizeof(rf_buf));
       if (rf_len == 0)
         break;  // nothing yet — return to loop()
-      radio_.stop_rx();
+      this->radio_.stop_rx();
 
       if (rf_len < 0) {
         // RX error — restart RX and wait more
-        radio_.start_rx(channel_);
+        this->radio_.start_rx(this->channel_);
         break;
       }
 
       // Parse the install reply — strip CRCs and log header
       uint8_t stripped[MAX_APDU_SIZE + 30];
-      uint16_t stripped_len = wmbus_frame_parse_(rf_buf, rf_len, stripped);
+      uint16_t stripped_len = this->wmbus_frame_parse_(rf_buf, rf_len, stripped);
       if (stripped_len >= 11) {
         uint16_t m_field = stripped[2] | (stripped[3] << 8);
         uint32_t serial = stripped[4] | (stripped[5] << 8) | (stripped[6] << 16) | (stripped[7] << 24);
@@ -1078,13 +1072,13 @@ void NartisWmbusComponent::loop() {
       } else {
         ESP_LOGD(TAG, "Install reply: bad frame (%d bytes)", rf_len);
         // Restart RX and keep waiting
-        radio_.start_rx(channel_);
+        this->radio_.start_rx(this->channel_);
         break;
       }
 
       // Install exchange complete — proceed to AARQ
       ESP_LOGD(TAG, "Install exchange complete, proceeding to AARQ");
-      set_next_state_(State::SEND_AARQ);
+      this->set_next_state_(State::SEND_AARQ);
       break;
     }
 
@@ -1092,181 +1086,182 @@ void NartisWmbusComponent::loop() {
       // Per firmware session sequence (decompiled/wmbus_install_req.c):
       //   After SND-IR install, AARQ is sent in SND-NR (C=0x44) encrypted
       //   if system title is known, or in SND-IR (C=0x46) unencrypted if not.
-      bool can_encrypt = system_title_valid_;
+      bool can_encrypt = this->system_title_valid_;
 
       if (can_encrypt) {
         ESP_LOGD(TAG, "Sending AARQ (encrypted, SND-NR) — system title known");
-        if (!transmit_dlms_(AARQ_TEMPLATE, sizeof(AARQ_TEMPLATE), WMBUS_C_SND_NR, true)) {
+        if (!this->transmit_dlms_(AARQ_TEMPLATE, sizeof(AARQ_TEMPLATE), WMBUS_C_SND_NR, true)) {
           ESP_LOGW(TAG, "Failed to send encrypted AARQ");
-          set_next_state_(State::IDLE);
+          this->set_next_state_(State::IDLE);
           break;
         }
       } else {
         ESP_LOGD(TAG, "Sending AARQ (unencrypted, SND-IR) — first association");
-        if (!transmit_dlms_(AARQ_TEMPLATE, sizeof(AARQ_TEMPLATE), WMBUS_C_SND_IR, false)) {
+        if (!this->transmit_dlms_(AARQ_TEMPLATE, sizeof(AARQ_TEMPLATE), WMBUS_C_SND_IR, false)) {
           ESP_LOGW(TAG, "Failed to send AARQ");
-          set_next_state_(State::IDLE);
+          this->set_next_state_(State::IDLE);
           break;
         }
       }
 
-      retry_count_ = 0;
-      if (!radio_.start_rx(channel_)) {
+      this->retry_count_ = 0;
+      if (!this->radio_.start_rx(this->channel_)) {
         ESP_LOGW(TAG, "Failed to start RX for AARE");
-        set_next_state_(State::IDLE);
+        this->set_next_state_(State::IDLE);
         break;
       }
-      start_timeout_(AARE_TIMEOUT_MS);
-      set_next_state_(State::WAIT_AARE);
+      this->start_timeout_(AARE_TIMEOUT_MS);
+      this->set_next_state_(State::WAIT_AARE);
       break;
     }
 
     case State::WAIT_AARE: {
       // Non-blocking: poll radio each loop() iteration
-      if (check_timeout_()) {
-        radio_.stop_rx();
-        retry_count_++;
-        if (retry_count_ >= MAX_RETRIES) {
+      if (this->check_timeout_()) {
+        this->radio_.stop_rx();
+        this->retry_count_++;
+        if (this->retry_count_ >= MAX_RETRIES) {
           ESP_LOGW(TAG, "No AARE after %d retries", MAX_RETRIES);
-          set_next_state_(State::IDLE);
+          this->set_next_state_(State::IDLE);
         } else {
-          ESP_LOGD(TAG, "AARE timeout, retry %d/%d", retry_count_, MAX_RETRIES);
-          set_next_state_(State::SEND_AARQ);
+          ESP_LOGD(TAG, "AARE timeout, retry %d/%d", this->retry_count_, MAX_RETRIES);
+          this->set_next_state_(State::SEND_AARQ);
         }
         break;
       }
 
       uint8_t rf_buf[MAX_FRAME_SIZE];
-      int16_t rf_len = radio_.check_rx(rf_buf, sizeof(rf_buf));
+      int16_t rf_len = this->radio_.check_rx(rf_buf, sizeof(rf_buf));
       if (rf_len == 0)
         break;  // nothing yet — return to loop()
-      radio_.stop_rx();
+      this->radio_.stop_rx();
 
       if (rf_len < 0) {
         // RX error — restart RX and wait more
-        radio_.start_rx(channel_);
+        this->radio_.start_rx(this->channel_);
         break;
       }
 
-      uint16_t len = process_rx_frame_(rf_buf, rf_len, apdu_buf_);
+      uint16_t len = this->process_rx_frame_(rf_buf, rf_len, this->apdu_buf_);
       if (len == 0) {
         // Bad frame — restart RX and keep waiting
-        radio_.start_rx(channel_);
+        this->radio_.start_rx(this->channel_);
         break;
       }
 
-      if (!parse_aare_(apdu_buf_, len)) {
+      if (!this->parse_aare_(this->apdu_buf_, len)) {
         ESP_LOGW(TAG, "AARE parse failed");
-        set_next_state_(State::IDLE);
+        this->set_next_state_(State::IDLE);
         break;
       }
 
-      associated_ = true;
+      this->associated_ = true;
       // Start data collection from first sensor
-      request_iter_ = sensors_.begin();
-      set_next_state_(State::DATA_REQUEST);
+      this->request_iter_ = this->sensors_.begin();
+      this->set_next_state_(State::DATA_REQUEST);
       break;
     }
 
     case State::DATA_REQUEST: {
-      if (request_iter_ == sensors_.end()) {
-        set_next_state_(State::PUBLISH);
+      if (this->request_iter_ == this->sensors_.end()) {
+        this->set_next_state_(State::PUBLISH);
         break;
       }
 
-      NartisWmbusSensorBase *sensor = request_iter_->second;
-      current_obis_ = sensor->get_obis_code();
+      NartisWmbusSensorBase *sensor = this->request_iter_->second;
+      this->current_obis_ = sensor->get_obis_code().c_str();
 
       uint8_t obis_bytes[6];
       sensor->parse_obis_bytes(obis_bytes);
 
       uint8_t get_req[20];
-      uint16_t req_len = build_get_request_(obis_bytes, sensor->get_class_id(),
+      uint16_t req_len = this->build_get_request_(obis_bytes, sensor->get_class_id(),
                                              sensor->get_attribute(), get_req);
 
       ESP_LOGD(TAG, "GET.request for OBIS %s (class=%d, attr=%d)",
-               current_obis_.c_str(), sensor->get_class_id(), sensor->get_attribute());
+               this->current_obis_, sensor->get_class_id(), sensor->get_attribute());
 
-      if (!transmit_dlms_(get_req, req_len, WMBUS_C_SND_NR, true)) {
+      if (!this->transmit_dlms_(get_req, req_len, WMBUS_C_SND_NR, true)) {
         ESP_LOGW(TAG, "Failed to send GET.request");
         sensor->record_failure();
-        set_next_state_(State::DATA_NEXT);
+        this->set_next_state_(State::DATA_NEXT);
         break;
       }
 
-      retry_count_ = 0;
-      if (!radio_.start_rx(channel_)) {
+      this->retry_count_ = 0;
+      if (!this->radio_.start_rx(this->channel_)) {
         ESP_LOGW(TAG, "Failed to start RX for response");
         sensor->record_failure();
-        set_next_state_(State::DATA_NEXT);
+        this->set_next_state_(State::DATA_NEXT);
         break;
       }
-      start_timeout_(RESPONSE_TIMEOUT_MS);
-      set_next_state_(State::WAIT_RESPONSE);
+      this->start_timeout_(RESPONSE_TIMEOUT_MS);
+      this->set_next_state_(State::WAIT_RESPONSE);
       break;
     }
 
     case State::WAIT_RESPONSE: {
       // Non-blocking: poll radio each loop() iteration
-      if (check_timeout_()) {
-        radio_.stop_rx();
-        retry_count_++;
-        if (retry_count_ >= MAX_RETRIES) {
+      if (this->check_timeout_()) {
+        this->radio_.stop_rx();
+        this->retry_count_++;
+        if (this->retry_count_ >= MAX_RETRIES) {
           ESP_LOGW(TAG, "No response for OBIS %s after %d retries — meter not responding, possibly displaced",
-                   current_obis_.c_str(), MAX_RETRIES);
-          auto range = sensors_.equal_range(current_obis_);
+                   this->current_obis_, MAX_RETRIES);
+          auto range = this->sensors_.equal_range(this->current_obis_);
           for (auto it = range.first; it != range.second; ++it) {
             it->second->record_failure();
           }
-          associated_ = false;
-          set_next_state_(State::PUBLISH);
+          this->associated_ = false;
+          this->set_next_state_(State::PUBLISH);
         } else {
-          ESP_LOGD(TAG, "Response timeout, retry %d/%d", retry_count_, MAX_RETRIES);
-          set_next_state_(State::DATA_REQUEST);
+          ESP_LOGD(TAG, "Response timeout, retry %d/%d", this->retry_count_, MAX_RETRIES);
+          this->set_next_state_(State::DATA_REQUEST);
         }
         break;
       }
 
       uint8_t rf_buf[MAX_FRAME_SIZE];
-      int16_t rf_len = radio_.check_rx(rf_buf, sizeof(rf_buf));
+      int16_t rf_len = this->radio_.check_rx(rf_buf, sizeof(rf_buf));
       if (rf_len == 0)
         break;  // nothing yet — return to loop()
-      radio_.stop_rx();
+      this->radio_.stop_rx();
 
       if (rf_len < 0) {
         // RX error — restart RX and wait more
-        radio_.start_rx(channel_);
+        this->radio_.start_rx(this->channel_);
         break;
       }
 
-      uint16_t len = process_rx_frame_(rf_buf, rf_len, apdu_buf_);
+      uint16_t len = this->process_rx_frame_(rf_buf, rf_len, this->apdu_buf_);
       if (len == 0) {
         // Bad frame — restart RX and keep waiting
-        radio_.start_rx(channel_);
+        this->radio_.start_rx(this->channel_);
         break;
       }
 
       // Parse response and distribute to all sensors with this OBIS code
       float value = 0.0f;
-      std::string text_value;
+      char text_value[512];
+      text_value[0] = '\0';
       bool is_text = false;
-      if (parse_get_response_(apdu_buf_, len, value, text_value, is_text)) {
-        if (!associated_) {
+      if (this->parse_get_response_(this->apdu_buf_, len, value, text_value, sizeof(text_value), is_text)) {
+        if (!this->associated_) {
           ESP_LOGI(TAG, "Meter responding again — association restored");
-          associated_ = true;
+          this->associated_ = true;
         }
         if (is_text) {
-          ESP_LOGD(TAG, "OBIS %s = \"%s\"", current_obis_.c_str(), text_value.c_str());
+          ESP_LOGD(TAG, "OBIS %s = \"%s\"", this->current_obis_, text_value);
         } else {
-          ESP_LOGD(TAG, "OBIS %s = %.3f", current_obis_.c_str(), value);
+          ESP_LOGD(TAG, "OBIS %s = %.3f", this->current_obis_, value);
         }
-        auto range = sensors_.equal_range(current_obis_);
+        auto range = this->sensors_.equal_range(this->current_obis_);
         for (auto it = range.first; it != range.second; ++it) {
           if (it->second->get_type() == SENSOR_NUMERIC && !is_text) {
             static_cast<NartisWmbusSensor *>(it->second)->set_value(value);
 #ifdef USE_TEXT_SENSOR
           } else if (it->second->get_type() == SENSOR_TEXT && is_text) {
-            static_cast<NartisWmbusTextSensor *>(it->second)->set_value(text_value.c_str());
+            static_cast<NartisWmbusTextSensor *>(it->second)->set_value(text_value);
           } else if (it->second->get_type() == SENSOR_TEXT && !is_text) {
             // Numeric value to text sensor — convert to string
             char buf[16];
@@ -1276,55 +1271,55 @@ void NartisWmbusComponent::loop() {
           }
         }
       } else {
-        ESP_LOGW(TAG, "Failed to parse GET.response for OBIS %s", current_obis_.c_str());
-        auto range = sensors_.equal_range(current_obis_);
+        ESP_LOGW(TAG, "Failed to parse GET.response for OBIS %s", this->current_obis_);
+        auto range = this->sensors_.equal_range(this->current_obis_);
         for (auto it = range.first; it != range.second; ++it) {
           it->second->record_failure();
         }
       }
 
-      set_next_state_(State::DATA_NEXT);
+      this->set_next_state_(State::DATA_NEXT);
       break;
     }
 
     case State::DATA_NEXT: {
       // Advance to next unique OBIS code
-      std::string last_obis = current_obis_;
-      while (request_iter_ != sensors_.end() && request_iter_->first == last_obis) {
-        ++request_iter_;
+      const char *last_obis = this->current_obis_;
+      while (this->request_iter_ != this->sensors_.end() && this->request_iter_->first == last_obis) {
+        ++this->request_iter_;
       }
 
-      if (request_iter_ == sensors_.end()) {
-        set_next_state_(State::PUBLISH);
+      if (this->request_iter_ == this->sensors_.end()) {
+        this->set_next_state_(State::PUBLISH);
       } else {
-        set_next_state_(State::DATA_REQUEST);
+        this->set_next_state_(State::DATA_REQUEST);
       }
       break;
     }
 
     case State::PUBLISH: {
       ESP_LOGD(TAG, "Publishing sensor values");
-      for (auto &pair : sensors_) {
+      for (auto &pair : this->sensors_) {
         if (pair.second->has_value()) {
           pair.second->publish();
         }
       }
-      set_next_state_(State::IDLE);
+      this->set_next_state_(State::IDLE);
       break;
     }
 
     case State::LISTENING: {
-      listen_loop_();
+      this->listen_loop_();
       break;
     }
 
     case State::SNIFFING: {
-      sniff_loop_();
+      this->sniff_loop_();
       break;
     }
 
     default:
-      set_next_state_(State::IDLE);
+      this->set_next_state_(State::IDLE);
       break;
   }
 }
@@ -1404,7 +1399,7 @@ void NartisWmbusComponent::log_parsed_frame_(const uint8_t *frame, uint16_t len)
   decode_manufacturer_(m_field, mfr);
 
   ESP_LOGI(TAG, "SNIFF #%u: L=%d C=0x%02X(%s) M=%s(0x%04X) A=%08X v=%d t=0x%02X CI=0x%02X(%s)",
-           sniffer_packet_count_, l_field, c_field, LOG_STR_ARG(c_field_to_string_(c_field)),
+           this->sniffer_packet_count_, l_field, c_field, LOG_STR_ARG(c_field_to_string_(c_field)),
            mfr, m_field, serial, version, dev_type,
            ci_field, LOG_STR_ARG(ci_field_to_string_(ci_field)));
 
@@ -1443,8 +1438,8 @@ void NartisWmbusComponent::log_parsed_frame_(const uint8_t *frame, uint16_t len)
     if (ct_len > 0 && ct_len < MAX_APDU_SIZE) {
       uint8_t nonce[12];
       bool can_decrypt = false;
-      if (system_title_valid_) {
-        memcpy(nonce, meter_system_title_, 8);
+      if (this->system_title_valid_) {
+        memcpy(nonce, this->meter_system_title_, 8);
         can_decrypt = true;
       }
       if (can_decrypt) {
@@ -1455,7 +1450,7 @@ void NartisWmbusComponent::log_parsed_frame_(const uint8_t *frame, uint16_t len)
 
         uint8_t plain[MAX_APDU_SIZE];
         uint8_t sc_aad = data[0];  // SC byte as AAD
-        if (aes_gcm_crypt_(false, decryption_key_.data(), nonce, &sc_aad, 1, &data[6], ct_len, plain)) {
+        if (this->aes_gcm_crypt_(false, this->decryption_key_.data(), nonce, &sc_aad, 1, &data[6], ct_len, plain)) {
           char plain_hex[129];
           uint16_t dump_len = ct_len > 64 ? 64 : ct_len;
           hex_to_str_(plain, dump_len, plain_hex, sizeof(plain_hex));
@@ -1477,12 +1472,12 @@ void NartisWmbusComponent::log_parsed_frame_(const uint8_t *frame, uint16_t len)
     // Check if this is an AARE (tag 0x61) — extract system title for future decryption
     if (data_len > 2 && data[0] == 0x61) {
       ESP_LOGI(TAG, "  Detected AARE — attempting system title extraction");
-      if (parse_aare_(data, data_len)) {
+      if (this->parse_aare_(data, data_len)) {
         ESP_LOGI(TAG, "  System title captured: %02X%02X%02X%02X%02X%02X%02X%02X",
-                 meter_system_title_[0], meter_system_title_[1],
-                 meter_system_title_[2], meter_system_title_[3],
-                 meter_system_title_[4], meter_system_title_[5],
-                 meter_system_title_[6], meter_system_title_[7]);
+                 this->meter_system_title_[0], this->meter_system_title_[1],
+                 this->meter_system_title_[2], this->meter_system_title_[3],
+                 this->meter_system_title_[4], this->meter_system_title_[5],
+                 this->meter_system_title_[6], this->meter_system_title_[7]);
       }
     }
   }
@@ -1491,22 +1486,22 @@ void NartisWmbusComponent::log_parsed_frame_(const uint8_t *frame, uint16_t len)
 void NartisWmbusComponent::sniff_loop_() {
   // Non-blocking RX poll — short timeout so loop() stays responsive
   uint8_t rf_buf[MAX_FRAME_SIZE];
-  uint16_t rf_len = radio_.receive_packet(rf_buf, sizeof(rf_buf), 100, channel_);
+  uint16_t rf_len = this->radio_.receive_packet(rf_buf, sizeof(rf_buf), 100, this->channel_);
   if (rf_len == 0)
     return;
 
-  sniffer_packet_count_++;
+  this->sniffer_packet_count_++;
 
   // Log raw frame
-  log_raw_frame_(rf_buf, rf_len);
+  this->log_raw_frame_(rf_buf, rf_len);
 
   // Try to strip CRCs and parse
   uint8_t stripped[MAX_APDU_SIZE + 20];
-  uint16_t stripped_len = wmbus_frame_parse_(rf_buf, rf_len, stripped);
+  uint16_t stripped_len = this->wmbus_frame_parse_(rf_buf, rf_len, stripped);
 
   if (stripped_len > 0) {
     ESP_LOGI(TAG, "SNIFF CRC: OK (raw=%d, clean=%d)", rf_len, stripped_len);
-    log_parsed_frame_(stripped, stripped_len);
+    this->log_parsed_frame_(stripped, stripped_len);
   } else {
     ESP_LOGW(TAG, "SNIFF CRC: FAILED (raw=%d bytes) — not a valid W-MBus frame", rf_len);
   }
@@ -1527,17 +1522,17 @@ const LogString *NartisWmbusComponent::mode_to_string_(Mode mode) {
 
 void NartisWmbusComponent::listen_loop_() {
   uint8_t rf_buf[MAX_FRAME_SIZE];
-  uint16_t rf_len = radio_.receive_packet(rf_buf, sizeof(rf_buf), 100, channel_);
+  uint16_t rf_len = this->radio_.receive_packet(rf_buf, sizeof(rf_buf), 100, this->channel_);
   if (rf_len == 0)
     return;
 
-  listen_packet_count_++;
+  this->listen_packet_count_++;
 
   // Strip CRCs and log header
   uint8_t stripped[MAX_FRAME_SIZE];
-  uint16_t stripped_len = wmbus_frame_parse_(rf_buf, rf_len, stripped);
+  uint16_t stripped_len = this->wmbus_frame_parse_(rf_buf, rf_len, stripped);
   if (stripped_len < 11) {
-    ESP_LOGD(TAG, "LISTEN #%u: bad frame (%d raw bytes)", listen_packet_count_, rf_len);
+    ESP_LOGD(TAG, "LISTEN #%u: bad frame (%d raw bytes)", this->listen_packet_count_, rf_len);
     return;
   }
 
@@ -1547,12 +1542,12 @@ void NartisWmbusComponent::listen_loop_() {
   char mfr[4];
   decode_manufacturer_(m_field, mfr);
   ESP_LOGI(TAG, "LISTEN #%u: C=0x%02X(%s) M=%s S=%08X v=%d t=0x%02X CI=0x%02X(%s)",
-           listen_packet_count_, stripped[1], LOG_STR_ARG(c_field_to_string_(stripped[1])),
+           this->listen_packet_count_, stripped[1], LOG_STR_ARG(c_field_to_string_(stripped[1])),
            mfr, serial, stripped[8], stripped[9],
            stripped[10], LOG_STR_ARG(ci_field_to_string_(stripped[10])));
 
   // Extract DLMS APDU (re-parses CRCs internally — minor overhead)
-  uint16_t dlms_len = process_rx_frame_(rf_buf, rf_len, apdu_buf_);
+  uint16_t dlms_len = this->process_rx_frame_(rf_buf, rf_len, this->apdu_buf_);
   if (dlms_len == 0) {
     ESP_LOGD(TAG, "LISTEN: no DLMS payload");
     return;
@@ -1561,11 +1556,11 @@ void NartisWmbusComponent::listen_loop_() {
   // Log DLMS APDU hex
   char hex[129];
   uint16_t dump = dlms_len > 64 ? 64 : dlms_len;
-  hex_to_str_(apdu_buf_, dump, hex, sizeof(hex));
+  hex_to_str_(this->apdu_buf_, dump, hex, sizeof(hex));
   ESP_LOGI(TAG, "LISTEN: DLMS [%d]: %s%s", dlms_len, hex, dlms_len > 64 ? "..." : "");
 
   // Parse and extract values
-  listen_parse_dlms_(apdu_buf_, dlms_len);
+  this->listen_parse_dlms_(this->apdu_buf_, dlms_len);
 }
 
 void NartisWmbusComponent::listen_parse_dlms_(const uint8_t *data, uint16_t len) {
@@ -1581,7 +1576,7 @@ void NartisWmbusComponent::listen_parse_dlms_(const uint8_t *data, uint16_t len)
     case 0xC7: ESP_LOGI(TAG, "LISTEN: ACTION.response"); break;
     case 0x61: {
       ESP_LOGI(TAG, "LISTEN: AARE — extracting system title");
-      parse_aare_(data, len);
+      this->parse_aare_(data, len);
       return;
     }
     default: ESP_LOGI(TAG, "LISTEN: DLMS tag 0x%02X", tag); break;
@@ -1595,5 +1590,4 @@ void NartisWmbusComponent::scan_obis_values_(const uint8_t * /*data*/, uint16_t 
   // TODO: implement OBIS+value extraction from push data once format is known
 }
 
-}  // namespace nartis_wmbus
-}  // namespace esphome
+}  // namespace esphome::nartis_wmbus
