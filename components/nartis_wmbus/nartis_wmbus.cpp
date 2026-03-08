@@ -820,7 +820,7 @@ uint16_t NartisWmbusComponent::receive_dlms_(uint8_t *dlms_out, uint32_t timeout
 // ============================================================================
 
 void NartisWmbusComponent::register_sensor(NartisWmbusSensorBase *sensor) {
-  this->sensors_.insert({sensor->get_obis_code(), sensor});
+  this->sensors_.push_back({sensor->get_obis_code().c_str(), sensor});
 }
 
 // ============================================================================
@@ -837,6 +837,10 @@ void NartisWmbusComponent::setup() {
 
   // Initialize radio
   this->radio_.set_pins(this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_);
+
+  // Sort sensors by OBIS code so same-code entries are adjacent (replaces multimap ordering)
+  std::sort(this->sensors_.begin(), this->sensors_.end(),
+            [](const SensorEntry &a, const SensorEntry &b) { return strcmp(a.obis_code, b.obis_code) < 0; });
 
   this->set_timeout(2000, [this]() {
     if (!this->radio_.init(this->channel_)) {
@@ -997,8 +1001,8 @@ void NartisWmbusComponent::loop() {
       this->session_start_ms_ = millis();
 
       // Reset sensor states
-      for (auto &pair : this->sensors_) {
-        pair.second->reset();
+      for (auto &entry : this->sensors_) {
+        entry.sensor->reset();
       }
 
       this->retry_count_ = 0;
@@ -1011,7 +1015,7 @@ void NartisWmbusComponent::loop() {
       //   5. Encrypted data exchange (GET/SET)
       if (this->associated_) {
         // Already associated from previous cycle — skip install+AARQ, go straight to data
-        this->request_iter_ = this->sensors_.begin();
+        this->request_idx_ = 0;
         this->set_next_state_(State::DATA_REQUEST);
       } else {
         // Need to (re-)establish association — start with install request
@@ -1173,19 +1177,19 @@ void NartisWmbusComponent::loop() {
 
       this->associated_ = true;
       // Start data collection from first sensor
-      this->request_iter_ = this->sensors_.begin();
+      this->request_idx_ = 0;
       this->set_next_state_(State::DATA_REQUEST);
       break;
     }
 
     case State::DATA_REQUEST: {
-      if (this->request_iter_ == this->sensors_.end()) {
+      if (this->request_idx_ >= this->sensors_.size()) {
         this->set_next_state_(State::PUBLISH);
         break;
       }
 
-      NartisWmbusSensorBase *sensor = this->request_iter_->second;
-      this->current_obis_ = sensor->get_obis_code().c_str();
+      NartisWmbusSensorBase *sensor = this->sensors_[this->request_idx_].sensor;
+      this->current_obis_ = this->sensors_[this->request_idx_].obis_code;
 
       uint8_t obis_bytes[6];
       sensor->parse_obis_bytes(obis_bytes);
@@ -1223,9 +1227,9 @@ void NartisWmbusComponent::loop() {
         if (this->retry_count_ >= MAX_RETRIES) {
           ESP_LOGW(TAG, "No response for OBIS %s after %d retries — meter not responding, possibly displaced",
                    this->current_obis_, MAX_RETRIES);
-          auto range = this->sensors_.equal_range(this->current_obis_);
-          for (auto it = range.first; it != range.second; ++it) {
-            it->second->record_failure();
+          for (auto &entry : this->sensors_) {
+            if (strcmp(entry.obis_code, this->current_obis_) == 0)
+              entry.sensor->record_failure();
           }
           this->associated_ = false;
           this->set_next_state_(State::PUBLISH);
@@ -1270,26 +1274,27 @@ void NartisWmbusComponent::loop() {
         } else {
           ESP_LOGD(TAG, "OBIS %s = %.3f", this->current_obis_, value);
         }
-        auto range = this->sensors_.equal_range(this->current_obis_);
-        for (auto it = range.first; it != range.second; ++it) {
-          if (it->second->get_type() == SENSOR_NUMERIC && !is_text) {
-            static_cast<NartisWmbusSensor *>(it->second)->set_value(value);
+        for (auto &entry : this->sensors_) {
+          if (strcmp(entry.obis_code, this->current_obis_) != 0)
+            continue;
+          if (entry.sensor->get_type() == SENSOR_NUMERIC && !is_text) {
+            static_cast<NartisWmbusSensor *>(entry.sensor)->set_value(value);
 #ifdef USE_TEXT_SENSOR
-          } else if (it->second->get_type() == SENSOR_TEXT && is_text) {
-            static_cast<NartisWmbusTextSensor *>(it->second)->set_value(text_value);
-          } else if (it->second->get_type() == SENSOR_TEXT && !is_text) {
+          } else if (entry.sensor->get_type() == SENSOR_TEXT && is_text) {
+            static_cast<NartisWmbusTextSensor *>(entry.sensor)->set_value(text_value);
+          } else if (entry.sensor->get_type() == SENSOR_TEXT && !is_text) {
             // Numeric value to text sensor — convert to string
             char buf[16];
             snprintf(buf, sizeof(buf), "%.3f", value);
-            static_cast<NartisWmbusTextSensor *>(it->second)->set_value(buf);
+            static_cast<NartisWmbusTextSensor *>(entry.sensor)->set_value(buf);
 #endif
           }
         }
       } else {
         ESP_LOGW(TAG, "Failed to parse GET.response for OBIS %s", this->current_obis_);
-        auto range = this->sensors_.equal_range(this->current_obis_);
-        for (auto it = range.first; it != range.second; ++it) {
-          it->second->record_failure();
+        for (auto &entry : this->sensors_) {
+          if (strcmp(entry.obis_code, this->current_obis_) == 0)
+            entry.sensor->record_failure();
         }
       }
 
@@ -1300,11 +1305,12 @@ void NartisWmbusComponent::loop() {
     case State::DATA_NEXT: {
       // Advance to next unique OBIS code
       const char *last_obis = this->current_obis_;
-      while (this->request_iter_ != this->sensors_.end() && this->request_iter_->first == last_obis) {
-        ++this->request_iter_;
+      while (this->request_idx_ < this->sensors_.size() &&
+             strcmp(this->sensors_[this->request_idx_].obis_code, last_obis) == 0) {
+        ++this->request_idx_;
       }
 
-      if (this->request_iter_ == this->sensors_.end()) {
+      if (this->request_idx_ >= this->sensors_.size()) {
         this->set_next_state_(State::PUBLISH);
       } else {
         this->set_next_state_(State::DATA_REQUEST);
@@ -1314,9 +1320,9 @@ void NartisWmbusComponent::loop() {
 
     case State::PUBLISH: {
       ESP_LOGD(TAG, "Publishing sensor values");
-      for (auto &pair : this->sensors_) {
-        if (pair.second->has_value()) {
-          pair.second->publish();
+      for (auto &entry : this->sensors_) {
+        if (entry.sensor->has_value()) {
+          entry.sensor->publish();
         }
       }
       this->set_next_state_(State::IDLE);

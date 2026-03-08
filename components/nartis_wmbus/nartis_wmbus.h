@@ -6,8 +6,6 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
-#include <map>
-#include <string>
 #include <vector>
 
 #include "cmt2300a.h"
@@ -129,7 +127,10 @@ enum class Mode : uint8_t {
   SNIFFER = 2,  // Raw packet dump, no sensor publishing
 };
 
-using SensorMap = std::multimap<std::string, NartisWmbusSensorBase *>;
+struct SensorEntry {
+  const char *obis_code;          // points into sensor's std::string member (stable)
+  NartisWmbusSensorBase *sensor;
+};
 
 class NartisWmbusComponent : public PollingComponent {
  public:
@@ -222,9 +223,9 @@ class NartisWmbusComponent : public PollingComponent {
   uint8_t access_nr_{0};
   uint8_t retry_count_{0};
 
-  // Sensors
-  SensorMap sensors_;
-  SensorMap::iterator request_iter_{};
+  // Sensors (sorted by obis_code after setup)
+  std::vector<SensorEntry> sensors_;
+  size_t request_idx_{0};
   const char *current_obis_{nullptr};
 
   // Buffers
