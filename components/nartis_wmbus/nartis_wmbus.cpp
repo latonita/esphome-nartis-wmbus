@@ -658,6 +658,57 @@ bool NartisWmbusComponent::parse_get_response_(const uint8_t *data, uint16_t len
 }
 
 // ============================================================================
+// W-MBus Install Request (SND-IR pairing beacon)
+// Per firmware: send_install_req (0x101DC), write_install_payload (0xFD6C)
+//
+// The install request is a STANDALONE W-MBus SND-IR frame sent BEFORE the
+// DLMS AARQ to register our link-layer address with the meter. It carries
+// a 13-byte payload derived from the session identity (meter serial or padding).
+// This is SEPARATE from AARQ — the firmware sends them as two distinct steps.
+//
+// Frame: L + C(0x46) + M(2) + A(6) + CI(0x7A) + TPL(4) + install_payload(13)
+// Always unencrypted (encryption_check at 0xB71A returns 0 for C=0x46).
+// ============================================================================
+
+void NartisWmbusComponent::build_install_payload_(uint8_t out[INSTALL_PAYLOAD_SIZE]) {
+  // Per firmware write_install_payload (0xFD6C):
+  //   - Takes last 13 bytes of EEPROM Section 14 password record
+  //   - Factory default: 13 bytes of 0x30 ('0')
+  //   - With real data: meter serial + padding, right-aligned
+  //
+  // For our ESP32 reader: use meter_id if configured, else '0' padding
+  if (!meter_id_.empty()) {
+    // Right-align meter_id in 13 bytes, front-pad with '0'
+    uint8_t pad = INSTALL_PAYLOAD_SIZE;
+    uint8_t copy_len = meter_id_.size();
+    if (copy_len > INSTALL_PAYLOAD_SIZE)
+      copy_len = INSTALL_PAYLOAD_SIZE;
+    pad -= copy_len;
+    memset(out, 0x30, pad);
+    memcpy(out + pad, meter_id_.c_str(), copy_len);
+  } else {
+    // Factory default: 13 bytes of ASCII '0'
+    memset(out, 0x30, INSTALL_PAYLOAD_SIZE);
+  }
+}
+
+bool NartisWmbusComponent::send_install_frame_() {
+  uint8_t payload[INSTALL_PAYLOAD_SIZE];
+  build_install_payload_(payload);
+
+  uint8_t frame_buf[MAX_FRAME_SIZE];
+
+  // Increment access number (per firmware frame_set_mode 0xBAF4)
+  access_nr_++;
+
+  // Build SND-IR frame with install payload (always unencrypted)
+  uint16_t frame_len = wmbus_frame_build_(WMBUS_C_SND_IR, 0x7A, payload, INSTALL_PAYLOAD_SIZE, frame_buf);
+
+  ESP_LOGD(TAG, "Sending SND-IR install request (%d bytes)", frame_len);
+  return radio_.send_packet(frame_buf, frame_len, channel_);
+}
+
+// ============================================================================
 // High-level TX/RX
 // ============================================================================
 
@@ -893,9 +944,11 @@ const LogString *NartisWmbusComponent::state_to_string_(State state) {
   switch (state) {
     case State::NOT_INITIALIZED: return LOG_STR("NOT_INITIALIZED");
     case State::IDLE:            return LOG_STR("IDLE");
-    case State::INIT_SESSION:      return LOG_STR("INIT_SESSION");
-    case State::SEND_AARQ:       return LOG_STR("SEND_AARQ");
-    case State::WAIT_AARE:       return LOG_STR("WAIT_AARE");
+    case State::INIT_SESSION:    return LOG_STR("INIT_SESSION");
+    case State::SEND_INSTALL:    return LOG_STR("SEND_INSTALL");
+    case State::WAIT_INSTALL:    return LOG_STR("WAIT_INSTALL");
+    case State::SEND_AARQ:      return LOG_STR("SEND_AARQ");
+    case State::WAIT_AARE:      return LOG_STR("WAIT_AARE");
     case State::DATA_REQUEST:    return LOG_STR("DATA_REQUEST");
     case State::WAIT_RESPONSE:   return LOG_STR("WAIT_RESPONSE");
     case State::DATA_NEXT:       return LOG_STR("DATA_NEXT");
@@ -914,10 +967,10 @@ void NartisWmbusComponent::loop() {
   if (!this->is_ready() || this->state_ == State::NOT_INITIALIZED)
     return;
 
-  // Session watchdog — force back to IDLE if stuck
+  // Session watchdog — force back to IDLE if stuck (covers install+AARQ+data phases)
   if (this->state_ != State::IDLE && this->state_ != State::SNIFFING &&
-      this->state_ != State::LISTENING && this->state_ != State::INIT_SESSION &&
-      check_session_timeout_()) {
+      this->state_ != State::LISTENING && this->state_ != State::NOT_INITIALIZED &&
+      this->state_ != State::INIT_SESSION && check_session_timeout_()) {
     ESP_LOGW(TAG, "Session timeout (%ums) in state %s — aborting",
              SESSION_TIMEOUT_MS, LOG_STR_ARG(state_to_string_(state_)));
     radio_.go_standby();
@@ -940,34 +993,121 @@ void NartisWmbusComponent::loop() {
 
       retry_count_ = 0;
 
-      if (!system_title_valid_) {
-        // Never synced — must associate
-        set_next_state_(State::SEND_AARQ);
-      } else if (associated_) {
-        // Already associated — skip AARQ, go straight to data
+      // Per firmware session flow (decompiled/wmbus_install_req.c):
+      //   1. SND-IR install request (pairing beacon)
+      //   2. Wait for meter reply
+      //   3. AARQ (association request)
+      //   4. AARE (association response) → get system title
+      //   5. Encrypted data exchange (GET/SET)
+      if (associated_) {
+        // Already associated from previous cycle — skip install+AARQ, go straight to data
         request_iter_ = sensors_.begin();
         set_next_state_(State::DATA_REQUEST);
-      } else if (aggressive_reconnect_) {
-        // Lost association, aggressive mode — re-AARQ to reclaim
-        ESP_LOGW(TAG, "Association lost — aggressive reconnect, sending AARQ");
-        set_next_state_(State::SEND_AARQ);
       } else {
-        // Lost association, normal mode — try GET, warn if fails
-        ESP_LOGW(TAG, "Association lost — trying data request (meter may be displaced)");
-        request_iter_ = sensors_.begin();
-        set_next_state_(State::DATA_REQUEST);
+        // Need to (re-)establish association — start with install request
+        // Per firmware: SND-IR is always sent before AARQ, even on re-connect
+        set_next_state_(State::SEND_INSTALL);
       }
       break;
     }
 
-    case State::SEND_AARQ: {
-      ESP_LOGD(TAG, "Sending AARQ (unencrypted, SND-IR)");
+    case State::SEND_INSTALL: {
+      // Per firmware 0x101DC: send SND-IR install request (pairing beacon)
+      // This is a separate frame from AARQ — sent first to register our
+      // link-layer address with the meter. Always unencrypted.
+      ESP_LOGD(TAG, "Sending SND-IR install request (pairing beacon)");
 
-      // AARQ is sent unencrypted via SND-IR to establish association
-      if (!transmit_dlms_(AARQ_TEMPLATE, sizeof(AARQ_TEMPLATE), WMBUS_C_SND_IR, false)) {
-        ESP_LOGW(TAG, "Failed to send AARQ");
+      if (!send_install_frame_()) {
+        ESP_LOGW(TAG, "Failed to send install request");
         set_next_state_(State::IDLE);
         break;
+      }
+
+      retry_count_ = 0;
+      if (!radio_.start_rx(channel_)) {
+        ESP_LOGW(TAG, "Failed to start RX for install reply");
+        set_next_state_(State::IDLE);
+        break;
+      }
+      start_timeout_(INSTALL_TIMEOUT_MS);
+      set_next_state_(State::WAIT_INSTALL);
+      break;
+    }
+
+    case State::WAIT_INSTALL: {
+      // Wait for meter's install reply (or timeout).
+      // Per firmware: prepare_install_rx (0xFD3C) sets up RX handler,
+      // packet_handler(1, frame_desc) processes the reply.
+      // The reply is typically RSP-UD (C=0x08) with meter identity.
+      if (check_timeout_()) {
+        radio_.stop_rx();
+        retry_count_++;
+        if (retry_count_ >= MAX_RETRIES) {
+          ESP_LOGW(TAG, "No install reply after %d retries — proceeding to AARQ anyway", MAX_RETRIES);
+          // Even without install reply, try AARQ — meter may already be paired
+          set_next_state_(State::SEND_AARQ);
+        } else {
+          ESP_LOGD(TAG, "Install reply timeout, retry %d/%d", retry_count_, MAX_RETRIES);
+          set_next_state_(State::SEND_INSTALL);
+        }
+        break;
+      }
+
+      uint8_t rf_buf[MAX_FRAME_SIZE];
+      int16_t rf_len = radio_.check_rx(rf_buf, sizeof(rf_buf));
+      if (rf_len == 0)
+        break;  // nothing yet — return to loop()
+      radio_.stop_rx();
+
+      if (rf_len < 0) {
+        // RX error — restart RX and wait more
+        radio_.start_rx(channel_);
+        break;
+      }
+
+      // Parse the install reply — strip CRCs and log header
+      uint8_t stripped[MAX_APDU_SIZE + 30];
+      uint16_t stripped_len = wmbus_frame_parse_(rf_buf, rf_len, stripped);
+      if (stripped_len >= 11) {
+        uint16_t m_field = stripped[2] | (stripped[3] << 8);
+        uint32_t serial = stripped[4] | (stripped[5] << 8) | (stripped[6] << 16) | (stripped[7] << 24);
+        char mfr[4];
+        decode_manufacturer_(m_field, mfr);
+        ESP_LOGI(TAG, "Install reply: C=0x%02X M=%s S=%08X v=%d t=0x%02X CI=0x%02X",
+                 stripped[1], mfr, serial, stripped[8], stripped[9], stripped[10]);
+      } else {
+        ESP_LOGD(TAG, "Install reply: bad frame (%d bytes)", rf_len);
+        // Restart RX and keep waiting
+        radio_.start_rx(channel_);
+        break;
+      }
+
+      // Install exchange complete — proceed to AARQ
+      ESP_LOGD(TAG, "Install exchange complete, proceeding to AARQ");
+      set_next_state_(State::SEND_AARQ);
+      break;
+    }
+
+    case State::SEND_AARQ: {
+      // Per firmware session sequence (decompiled/wmbus_install_req.c):
+      //   After SND-IR install, AARQ is sent in SND-NR (C=0x44) encrypted
+      //   if system title is known, or in SND-IR (C=0x46) unencrypted if not.
+      bool can_encrypt = system_title_valid_;
+
+      if (can_encrypt) {
+        ESP_LOGD(TAG, "Sending AARQ (encrypted, SND-NR) — system title known");
+        if (!transmit_dlms_(AARQ_TEMPLATE, sizeof(AARQ_TEMPLATE), WMBUS_C_SND_NR, true)) {
+          ESP_LOGW(TAG, "Failed to send encrypted AARQ");
+          set_next_state_(State::IDLE);
+          break;
+        }
+      } else {
+        ESP_LOGD(TAG, "Sending AARQ (unencrypted, SND-IR) — first association");
+        if (!transmit_dlms_(AARQ_TEMPLATE, sizeof(AARQ_TEMPLATE), WMBUS_C_SND_IR, false)) {
+          ESP_LOGW(TAG, "Failed to send AARQ");
+          set_next_state_(State::IDLE);
+          break;
+        }
       }
 
       retry_count_ = 0;

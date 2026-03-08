@@ -56,10 +56,14 @@ static constexpr uint16_t MAX_FRAME_SIZE = 512;
 static constexpr uint16_t MAX_APDU_SIZE = 300;
 
 // Timeouts (ms)
+static constexpr uint32_t INSTALL_TIMEOUT_MS = 3000;  // SND-IR install reply wait
 static constexpr uint32_t AARE_TIMEOUT_MS = 3000;
 static constexpr uint32_t RESPONSE_TIMEOUT_MS = 5000;
-static constexpr uint32_t SESSION_TIMEOUT_MS = 5000;
+static constexpr uint32_t SESSION_TIMEOUT_MS = 10000;  // overall session watchdog (install+AARQ+data)
 static constexpr uint8_t MAX_RETRIES = 3;
+
+// Install payload size (per firmware: 13 bytes from EEPROM Section 14)
+static constexpr uint8_t INSTALL_PAYLOAD_SIZE = 13;
 
 // ============================================================================
 // Hardcoded Configuration
@@ -153,7 +157,9 @@ class NartisWmbusComponent : public PollingComponent {
     NOT_INITIALIZED,
     IDLE,
     INIT_SESSION,
-    SEND_AARQ,
+    SEND_INSTALL,     // Send SND-IR install request (pairing beacon)
+    WAIT_INSTALL,     // Wait for meter's install reply
+    SEND_AARQ,        // Send DLMS AARQ (association request)
     WAIT_AARE,
     DATA_REQUEST,
     WAIT_RESPONSE,
@@ -243,6 +249,10 @@ class NartisWmbusComponent : public PollingComponent {
   bool parse_aare_(const uint8_t *data, uint16_t len);
   bool parse_get_response_(const uint8_t *data, uint16_t len,
                            float &value, std::string &text_value, bool &is_text);
+
+  // W-MBus Install Request (SND-IR pairing beacon, per firmware 0x101DC)
+  void build_install_payload_(uint8_t out[INSTALL_PAYLOAD_SIZE]);
+  bool send_install_frame_();
 
   // High-level TX/RX
   bool transmit_dlms_(const uint8_t *apdu, uint16_t apdu_len,
