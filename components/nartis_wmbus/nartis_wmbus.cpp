@@ -182,6 +182,11 @@ void NartisWmbusComponent::setup() {
   switch (this->mode_) {
     case Mode::SNIFFER:
       ESP_LOGI(TAG, "Entering SNIFFER mode on ch %d (%.3f MHz)", this->channel_, freq);
+      if (!this->radio_.start_rx(this->channel_)) {
+        ESP_LOGE(TAG, "Failed to start RX for sniffer mode");
+        this->mark_failed();
+        return;
+      }
       this->state_ = State::SNIFFING;
       break;
     case Mode::LISTEN:
@@ -196,6 +201,11 @@ void NartisWmbusComponent::setup() {
         ESP_LOGW(TAG,
                  "Entering LISTEN mode on ch %d (%.3f MHz) — no meter_system_title configured, decryption disabled",
                  this->channel_, freq);
+      }
+      if (!this->radio_.start_rx(this->channel_)) {
+        ESP_LOGE(TAG, "Failed to start RX for listen mode");
+        this->mark_failed();
+        return;
       }
       this->state_ = State::LISTENING;
       break;
@@ -825,11 +835,17 @@ void NartisWmbusComponent::log_parsed_frame_(const uint8_t *frame, uint16_t len)
 }
 
 void NartisWmbusComponent::sniff_loop_() {
-  // Non-blocking RX poll — short timeout so loop() stays responsive
+  // Non-blocking RX check — radio stays in RX continuously (started in setup)
   uint8_t rf_buf[MAX_FRAME_SIZE];
-  uint16_t rf_len = this->radio_.receive_packet(rf_buf, sizeof(rf_buf), 100, this->channel_);
+  int16_t rf_len = this->radio_.check_rx(rf_buf, sizeof(rf_buf));
   if (rf_len == 0)
+    return;  // nothing yet — instant return
+
+  if (rf_len < 0) {
+    // RX error — radio re-enters RX automatically in check_rx_polling_
+    ESP_LOGW(TAG, "SNIFF: RX error");
     return;
+  }
 
   this->sniffer_packet_count_++;
 
@@ -846,6 +862,9 @@ void NartisWmbusComponent::sniff_loop_() {
   } else {
     ESP_LOGW(TAG, "SNIFF CRC: FAILED (raw=%d bytes) — not a valid W-MBus frame", rf_len);
   }
+
+  // Re-enter RX for next packet (check_rx leaves radio in standby after packet)
+  this->radio_.start_rx(this->channel_);
 }
 
 // ============================================================================
@@ -866,10 +885,16 @@ const LogString *NartisWmbusComponent::mode_to_string_(Mode mode) {
 }
 
 void NartisWmbusComponent::listen_loop_() {
+  // Non-blocking RX check — radio stays in RX continuously (started in setup)
   uint8_t rf_buf[MAX_FRAME_SIZE];
-  uint16_t rf_len = this->radio_.receive_packet(rf_buf, sizeof(rf_buf), 100, this->channel_);
+  int16_t rf_len = this->radio_.check_rx(rf_buf, sizeof(rf_buf));
   if (rf_len == 0)
+    return;  // nothing yet — instant return
+
+  if (rf_len < 0) {
+    ESP_LOGW(TAG, "LISTEN: RX error");
     return;
+  }
 
   this->listen_packet_count_++;
 
@@ -878,6 +903,7 @@ void NartisWmbusComponent::listen_loop_() {
   uint16_t stripped_len = wmbus_frame_parse(TAG, rf_buf, rf_len, stripped);
   if (stripped_len < 11) {
     ESP_LOGD(TAG, "LISTEN #%u: bad frame (%d raw bytes)", this->listen_packet_count_, rf_len);
+    this->radio_.start_rx(this->channel_);
     return;
   }
 
@@ -894,6 +920,7 @@ void NartisWmbusComponent::listen_loop_() {
   uint16_t dlms_len = this->process_rx_frame_(rf_buf, rf_len, this->apdu_buf_);
   if (dlms_len == 0) {
     ESP_LOGD(TAG, "LISTEN: no DLMS payload");
+    this->radio_.start_rx(this->channel_);
     return;
   }
 
@@ -905,6 +932,9 @@ void NartisWmbusComponent::listen_loop_() {
 
   // Parse and extract values
   this->listen_parse_dlms_(this->apdu_buf_, dlms_len);
+
+  // Re-enter RX for next packet
+  this->radio_.start_rx(this->channel_);
 }
 
 void NartisWmbusComponent::listen_parse_dlms_(const uint8_t *data, uint16_t len) {
