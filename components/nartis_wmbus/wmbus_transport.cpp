@@ -41,6 +41,8 @@ uint16_t wmbus_frame_build(uint8_t c_field, const uint8_t *payload, uint16_t pay
   uint8_t raw[MAX_APDU_SIZE + 30];
   uint16_t raw_len = 0;
 
+  ESP_LOGV("nartis_wmbus.wmbus", "frame_build: C=0x%02X pay_len=%d access_nr=%d", c_field, pay_len, access_nr);
+
   raw[raw_len++] = 0;
   raw[raw_len++] = c_field;
   raw[raw_len++] = OUR_MANUFACTURER & 0xFF;
@@ -90,10 +92,12 @@ uint16_t wmbus_frame_build(uint8_t c_field, const uint8_t *payload, uint16_t pay
     pos += block_len;
   }
 
+  ESP_LOGV("nartis_wmbus.wmbus", "frame_build: raw=%d -> interleaved=%d bytes (L=%d)", raw_len, out_len, raw[0]);
   return out_len;
 }
 
 uint16_t wmbus_frame_parse(const char *log_tag, const uint8_t *frame, uint16_t frame_len, uint8_t *out) {
+  ESP_LOGVV(log_tag, "wmbus_frame_parse: frame_len=%d", frame_len);
   uint16_t in_pos = 0;
   uint16_t out_len = 0;
 
@@ -118,13 +122,16 @@ uint16_t wmbus_frame_parse(const char *log_tag, const uint8_t *frame, uint16_t f
     uint16_t remaining = expected_data - out_len;
     uint16_t block_len = remaining > WMBUS_BLOCK_SIZE ? WMBUS_BLOCK_SIZE : remaining;
 
-    if (in_pos + block_len + 2 > frame_len)
+    if (in_pos + block_len + 2 > frame_len) {
+      ESP_LOGVV(log_tag, "wmbus_frame_parse: truncated data block at pos %d (need %d, have %d)",
+                in_pos, block_len + 2, frame_len - in_pos);
       return 0;
+    }
 
     crc_calc = wmbus_crc16_en13757(&frame[in_pos], block_len);
     crc_recv = (frame[in_pos + block_len] << 8) | frame[in_pos + block_len + 1];
     if (crc_calc != crc_recv) {
-      ESP_LOGW(log_tag, "CRC error in data block at pos %d", in_pos);
+      ESP_LOGW(log_tag, "CRC error in data block at pos %d: calc=0x%04X recv=0x%04X (block_len=%d)", in_pos, crc_calc, crc_recv, block_len);
       return 0;
     }
 
@@ -133,6 +140,7 @@ uint16_t wmbus_frame_parse(const char *log_tag, const uint8_t *frame, uint16_t f
     in_pos += block_len + 2;
   }
 
+  ESP_LOGVV(log_tag, "wmbus_frame_parse: OK, L=%d stripped=%d", l_field, out_len);
   return out_len;
 }
 
@@ -145,8 +153,10 @@ void build_install_payload(const char *meter_id, uint8_t out[INSTALL_PAYLOAD_SIZ
     pad -= copy_len;
     memset(out, 0x30, pad);
     memcpy(out + pad, meter_id, copy_len);
+    ESP_LOGV("nartis_wmbus.wmbus", "build_install_payload: meter_id='%s' pad=%d", meter_id, pad);
   } else {
     memset(out, 0x30, INSTALL_PAYLOAD_SIZE);
+    ESP_LOGV("nartis_wmbus.wmbus", "build_install_payload: no meter_id, all '0' padding");
   }
 }
 
