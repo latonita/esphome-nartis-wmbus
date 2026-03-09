@@ -257,6 +257,11 @@ void NartisWmbusComponent::dump_config() {
 }
 
 void NartisWmbusComponent::update() {
+  if (this->state_ == State::NOT_INITIALIZED) {
+    ESP_LOGD(TAG, "Update skipped — radio not initialized yet");
+    return;
+  }
+
   if (this->mode_ == Mode::SNIFFER) {
     ESP_LOGD(TAG, "Sniffer: %u packets captured so far", this->sniffer_packet_count_);
     return;
