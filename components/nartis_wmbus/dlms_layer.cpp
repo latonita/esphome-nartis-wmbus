@@ -36,8 +36,9 @@ uint16_t dlms_build_get_request(const uint8_t obis[6], uint16_t class_id, uint8_
 
 bool dlms_parse_aare(const char *log_tag, const uint8_t *data, uint16_t len, uint8_t meter_system_title[8],
                      bool &system_title_valid) {
+  ESP_LOGV(log_tag, "dlms_parse_aare: len=%d, tag=0x%02X", len, len > 0 ? data[0] : 0);
   if (len < 2 || data[0] != DLMS_TAG_AARE) {
-    ESP_LOGW(log_tag, "Not an AARE (tag=0x%02X)", data[0]);
+    ESP_LOGW(log_tag, "Not an AARE (tag=0x%02X, expected 0x%02X)", data[0], DLMS_TAG_AARE);
     return false;
   }
 
@@ -50,11 +51,15 @@ bool dlms_parse_aare(const char *log_tag, const uint8_t *data, uint16_t len, uin
     if (pos + 1 >= len)
       break;
     uint8_t tag_len = data[pos + 1];
+    ESP_LOGVV(log_tag, "dlms_parse_aare: TLV at pos=%d tag=0x%02X len=%d", pos, tag, tag_len);
     pos += 2;
-    if (pos + tag_len > len)
+    if (pos + tag_len > len) {
+      ESP_LOGVV(log_tag, "dlms_parse_aare: TLV overflows buffer (pos=%d tag_len=%d total=%d)", pos, tag_len, len);
       break;
+    }
 
     if (tag == DLMS_TAG_AARE_RESULT) {
+      ESP_LOGV(log_tag, "dlms_parse_aare: found RESULT field (tag_len=%d)", tag_len);
       if (tag_len >= DLMS_AARE_RESULT_FIELD_MIN_LEN && data[pos] == ASN1_TAG_INTEGER &&
           data[pos + 1] == ASN1_INTEGER_U8_LEN) {
         uint8_t result = data[pos + 2];
@@ -65,8 +70,12 @@ bool dlms_parse_aare(const char *log_tag, const uint8_t *data, uint16_t len, uin
           ESP_LOGW(log_tag, "AARE: association rejected (result=%d)", result);
           return false;
         }
+      } else {
+        ESP_LOGV(log_tag, "dlms_parse_aare: RESULT field malformed (tag_len=%d, inner_tag=0x%02X)",
+                 tag_len, pos < len ? data[pos] : 0);
       }
     } else if (tag == DLMS_TAG_AARE_RESPONDING_AP_TITLE) {
+      ESP_LOGV(log_tag, "dlms_parse_aare: found RESPONDING_AP_TITLE (tag_len=%d)", tag_len);
       if (tag_len >= DLMS_AARE_AP_TITLE_FIELD_LEN && data[pos] == ASN1_TAG_OCTET_STRING &&
           data[pos + 1] == DLMS_SYSTEM_TITLE_SIZE) {
         memcpy(meter_system_title, &data[pos + 2], DLMS_SYSTEM_TITLE_SIZE);
@@ -80,20 +89,26 @@ bool dlms_parse_aare(const char *log_tag, const uint8_t *data, uint16_t len, uin
                  meter_system_title[0], meter_system_title[1], meter_system_title[2], meter_system_title[3],
                  meter_system_title[4], meter_system_title[5], meter_system_title[6], meter_system_title[7]);
         ESP_LOGI(log_tag, "************************************************************");
+      } else {
+        ESP_LOGV(log_tag, "dlms_parse_aare: AP_TITLE field malformed (tag_len=%d, inner: 0x%02X 0x%02X)",
+                 tag_len, pos < len ? data[pos] : 0, pos + 1 < len ? data[pos + 1] : 0);
       }
+    } else {
+      ESP_LOGVV(log_tag, "dlms_parse_aare: skipping unknown tag 0x%02X (len=%d)", tag, tag_len);
     }
 
     pos += tag_len;
   }
 
   if (!result_ok) {
-    ESP_LOGW(log_tag, "AARE: no result field found");
+    ESP_LOGW(log_tag, "AARE: no result field found in %d bytes", len);
     return false;
   }
   if (!found_system_title) {
     ESP_LOGW(log_tag, "AARE: no system title found (will try without)");
   }
 
+  ESP_LOGV(log_tag, "dlms_parse_aare: success (result_ok=%d, sys_title=%d)", result_ok, found_system_title);
   return true;
 }
 
@@ -239,11 +254,13 @@ bool dlms_parse_get_response(const char *log_tag, const uint8_t *data, uint16_t 
                              uint16_t text_buf_size, bool &is_text) {
   is_text = false;
 
+  ESP_LOGV(log_tag, "dlms_parse_get_response: len=%d tag=0x%02X", len, len > 0 ? data[0] : 0);
   if (len < 3 || data[0] != DLMS_TAG_GET_RESPONSE) {
-    ESP_LOGW(log_tag, "Not a GET.response (tag=0x%02X)", data[0]);
+    ESP_LOGW(log_tag, "Not a GET.response (tag=0x%02X, expected 0x%02X)", data[0], DLMS_TAG_GET_RESPONSE);
     return false;
   }
 
+  ESP_LOGVV(log_tag, "dlms_parse_get_response: subtype=0x%02X invoke_id=0x%02X", data[1], data[2]);
   uint16_t pos = 3;
   if (pos >= len)
     return false;
@@ -251,22 +268,24 @@ bool dlms_parse_get_response(const char *log_tag, const uint8_t *data, uint16_t 
   uint8_t choice = data[pos++];
   if (choice == 0x01) {
     if (pos < len)
-      ESP_LOGW(log_tag, "GET.response error: access-result=%d", data[pos]);
+      ESP_LOGW(log_tag, "GET.response error: access-result=%d (data-access-error)", data[pos]);
     return false;
   }
   if (choice != 0x00) {
-    ESP_LOGW(log_tag, "GET.response unexpected choice=%d", choice);
+    ESP_LOGW(log_tag, "GET.response unexpected choice=%d (expected 0=data, 1=error)", choice);
     return false;
   }
 
   if (pos >= len)
     return false;
   uint8_t type_tag = data[pos++];
+  ESP_LOGV(log_tag, "dlms_parse_get_response: DLMS type=0x%02X, remaining=%d bytes", type_tag, len - pos);
 
   if (!dlms_decode_data_element(type_tag, &data[pos], len - pos, value, text_buf, text_buf_size, is_text)) {
-    ESP_LOGD(log_tag, "GET.response: failed to decode DLMS type 0x%02X", type_tag);
+    ESP_LOGD(log_tag, "GET.response: failed to decode DLMS type 0x%02X (avail=%d)", type_tag, len - pos);
     return false;
   }
+  ESP_LOGV(log_tag, "dlms_parse_get_response: decoded OK, is_text=%s", YESNO(is_text));
   return true;
 }
 
@@ -277,6 +296,8 @@ bool dlms_parse_get_response(const char *log_tag, const uint8_t *data, uint16_t 
 bool dlms_aes_gcm_crypt(const char *log_tag, bool encrypt, const uint8_t *key, const uint8_t *nonce,
                         const uint8_t *aad, uint16_t aad_len, const uint8_t *input, uint16_t len, uint8_t *output,
                         uint8_t *tag_buf, uint8_t tag_len) {
+  ESP_LOGVV(log_tag, "aes_gcm_crypt: %s len=%d aad_len=%d tag_len=%d",
+            encrypt ? "ENCRYPT" : "DECRYPT", len, aad_len, tag_len);
   mbedtls_gcm_context gcm_ctx;
   mbedtls_gcm_init(&gcm_ctx);
 
@@ -341,6 +362,10 @@ bool dlms_aes_gcm_crypt(const char *log_tag, bool encrypt, const uint8_t *key, c
 
 uint16_t dlms_encrypt(const char *log_tag, const std::array<uint8_t, 16> &key, const std::array<uint8_t, 8> &system_title,
                       uint32_t invocation_counter, const uint8_t *apdu, uint16_t apdu_len, uint8_t *out) {
+  ESP_LOGV(log_tag, "dlms_encrypt: apdu_len=%d IC=%u sys_title=%02X%02X%02X%02X%02X%02X%02X%02X",
+           apdu_len, invocation_counter, system_title[0], system_title[1], system_title[2], system_title[3],
+           system_title[4], system_title[5], system_title[6], system_title[7]);
+
   uint16_t pos = 0;
   out[pos++] = DLMS_SC_ENC_COMP;
   out[pos++] = 0x00;
@@ -357,12 +382,18 @@ uint16_t dlms_encrypt(const char *log_tag, const std::array<uint8_t, 16> &key, c
   nonce[10] = (invocation_counter >> 8) & 0xFF;
   nonce[11] = invocation_counter & 0xFF;
 
+  ESP_LOGVV(log_tag, "dlms_encrypt: nonce=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+            nonce[0], nonce[1], nonce[2], nonce[3], nonce[4], nonce[5],
+            nonce[6], nonce[7], nonce[8], nonce[9], nonce[10], nonce[11]);
+
   uint8_t sc_aad = DLMS_SC_ENC_COMP;
   if (!dlms_aes_gcm_crypt(log_tag, true, key.data(), nonce, &sc_aad, 1, apdu, apdu_len, &out[pos])) {
+    ESP_LOGW(log_tag, "dlms_encrypt: GCM encrypt failed");
     return 0;
   }
   pos += apdu_len;
 
+  ESP_LOGV(log_tag, "dlms_encrypt: output %d bytes (SC=0x%02X IC=0x%08X)", pos, DLMS_SC_ENC_COMP, invocation_counter);
   return pos;
 }
 
@@ -448,6 +479,10 @@ static uint16_t dlms_inflate(const char *log_tag, const uint8_t *deflate_data, u
 
 uint16_t dlms_decrypt(const char *log_tag, const std::array<uint8_t, 16> &key, const uint8_t meter_system_title[8],
                       const uint8_t *enc_payload, uint16_t enc_len, uint8_t *apdu_out) {
+  ESP_LOGV(log_tag, "dlms_decrypt: enc_len=%d, meter_sys_title=%02X%02X%02X%02X%02X%02X%02X%02X",
+           enc_len, meter_system_title[0], meter_system_title[1], meter_system_title[2], meter_system_title[3],
+           meter_system_title[4], meter_system_title[5], meter_system_title[6], meter_system_title[7]);
+
   if (enc_len < 7) {
     ESP_LOGW(log_tag, "Encrypted payload too short: %d", enc_len);
     return 0;
@@ -457,7 +492,12 @@ uint16_t dlms_decrypt(const char *log_tag, const std::array<uint8_t, 16> &key, c
   uint8_t sc = enc_payload[pos++];
   pos++;  // skip pad byte
 
+  ESP_LOGV(log_tag, "dlms_decrypt: SC=0x%02X (enc=%d auth=%d comp=%d suite=%d)",
+           sc, !!(sc & DLMS_SC_ENCRYPTED), !!(sc & DLMS_SC_AUTHENTICATED),
+           !!(sc & DLMS_SC_COMPRESSED), sc & DLMS_SC_SUITE_MASK);
+
   if (!(sc & DLMS_SC_ENCRYPTED)) {
+    ESP_LOGV(log_tag, "dlms_decrypt: not encrypted, passthrough (compressed=%d)", !!(sc & DLMS_SC_COMPRESSED));
     // No encryption — pass through plaintext (may still be compressed)
     uint16_t plain_len = enc_len - pos;
     if (sc & DLMS_SC_COMPRESSED) {
@@ -469,6 +509,7 @@ uint16_t dlms_decrypt(const char *log_tag, const std::array<uint8_t, 16> &key, c
         return 0;
       }
       uint16_t deflate_len = plain_len - hdr_len - 8;  // strip gzip trailer (CRC32 + ISIZE)
+      ESP_LOGV(log_tag, "dlms_decrypt: decompressing %d DEFLATE bytes", deflate_len);
       return dlms_inflate(log_tag, &enc_payload[pos + hdr_len], deflate_len, apdu_out, MAX_APDU_DECOMPRESSED);
     }
     memcpy(apdu_out, &enc_payload[pos], plain_len);
@@ -486,27 +527,42 @@ uint16_t dlms_decrypt(const char *log_tag, const std::array<uint8_t, 16> &key, c
   nonce[10] = (ic >> 8) & 0xFF;
   nonce[11] = ic & 0xFF;
 
+  ESP_LOGV(log_tag, "dlms_decrypt: IC=0x%08X(%u), cipher starts at pos=%d, remaining=%d", ic, ic, pos, enc_len - pos);
+  ESP_LOGVV(log_tag, "dlms_decrypt: nonce=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+            nonce[0], nonce[1], nonce[2], nonce[3], nonce[4], nonce[5],
+            nonce[6], nonce[7], nonce[8], nonce[9], nonce[10], nonce[11]);
+
   uint16_t cipher_len = enc_len - pos;
   uint8_t *tag_ptr = nullptr;
   uint8_t tag_len = 0;
   if (sc & DLMS_SC_AUTHENTICATED) {
-    if (cipher_len < 12)
+    if (cipher_len < 12) {
+      ESP_LOGW(log_tag, "dlms_decrypt: auth tag expected but cipher_len=%d < 12", cipher_len);
       return 0;
+    }
     cipher_len -= 12;
     tag_ptr = const_cast<uint8_t *>(&enc_payload[pos + cipher_len]);
     tag_len = 12;
+    ESP_LOGV(log_tag, "dlms_decrypt: authenticated, cipher=%d tag=%d", cipher_len, tag_len);
+  } else {
+    ESP_LOGV(log_tag, "dlms_decrypt: no auth tag, cipher=%d", cipher_len);
   }
 
   // Decrypt into apdu_out (used as temp buffer if decompression follows)
   if (!dlms_aes_gcm_crypt(log_tag, false, key.data(), nonce, &sc, 1, &enc_payload[pos], cipher_len, apdu_out, tag_ptr,
                            tag_len)) {
+    ESP_LOGW(log_tag, "dlms_decrypt: GCM decrypt failed (wrong key or system title?)");
     return 0;
   }
 
   ESP_LOGD(log_tag, "Decrypted %d bytes, SC=0x%02X IC=0x%08X", cipher_len, sc, ic);
+  ESP_LOGV(log_tag, "dlms_decrypt: decrypted first bytes: %02X %02X %02X %02X",
+           cipher_len > 0 ? apdu_out[0] : 0, cipher_len > 1 ? apdu_out[1] : 0,
+           cipher_len > 2 ? apdu_out[2] : 0, cipher_len > 3 ? apdu_out[3] : 0);
 
   // Decompress if SC compressed bit is set
   if (sc & DLMS_SC_COMPRESSED) {
+    ESP_LOGV(log_tag, "dlms_decrypt: SC has compressed bit, stripping GZIP header");
     uint16_t hdr_len = dlms_gzip_strip_header(log_tag, apdu_out, cipher_len);
     if (hdr_len == 0)
       return 0;
@@ -518,6 +574,8 @@ uint16_t dlms_decrypt(const char *log_tag, const std::array<uint8_t, 16> &key, c
     }
     uint16_t deflate_len = cipher_len - hdr_len - 8;
 
+    ESP_LOGV(log_tag, "dlms_decrypt: inflating %d DEFLATE bytes (gzip_hdr=%d)", deflate_len, hdr_len);
+
     // Need a temp buffer — can't inflate in-place (static to avoid heap fragmentation on ESP32)
     static uint8_t decomp_buf[MAX_APDU_DECOMPRESSED];
 
@@ -528,6 +586,9 @@ uint16_t dlms_decrypt(const char *log_tag, const std::array<uint8_t, 16> &key, c
     memcpy(apdu_out, decomp_buf, decomp_len);
 
     ESP_LOGD(log_tag, "Decompressed %d -> %d bytes", cipher_len, decomp_len);
+    ESP_LOGV(log_tag, "dlms_decrypt: decompressed first bytes: %02X %02X %02X %02X",
+             decomp_len > 0 ? apdu_out[0] : 0, decomp_len > 1 ? apdu_out[1] : 0,
+             decomp_len > 2 ? apdu_out[2] : 0, decomp_len > 3 ? apdu_out[3] : 0);
     return decomp_len;
   }
 

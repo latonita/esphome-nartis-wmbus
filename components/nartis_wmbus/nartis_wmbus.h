@@ -39,7 +39,7 @@ class NartisWmbusComponent : public PollingComponent {
   void dump_config() override;
   void loop() override;
   void update() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
+  float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
 
   // Pin setters (from Python config)
   void set_pin_sdio(GPIOPin *pin) { this->pin_sdio_ = pin; }
