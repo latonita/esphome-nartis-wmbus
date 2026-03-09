@@ -16,7 +16,8 @@
 namespace esphome::nartis_wmbus {
 
 // Timeouts (ms)
-static constexpr uint32_t INSTALL_TIMEOUT_MS = 3000;  // SND-IR install reply wait
+static constexpr uint32_t RADIO_INIT_DELAY_MS = 10000;  // defer radio init so WiFi/logging are ready
+static constexpr uint32_t INSTALL_TIMEOUT_MS = 3000;     // SND-IR install reply wait
 static constexpr uint32_t AARE_TIMEOUT_MS = 3000;
 static constexpr uint32_t RESPONSE_TIMEOUT_MS = 5000;
 static constexpr uint32_t SESSION_TIMEOUT_MS = 10000;  // overall session watchdog (install+AARQ+data)
@@ -140,6 +141,9 @@ class NartisWmbusComponent : public PollingComponent {
   uint16_t process_rx_frame_(const uint8_t *rf_buf, uint16_t rf_len, uint8_t *dlms_out);  // non-blocking parse
 
   // Invocation counter resets to 0 each boot (no NVS persistence needed)
+
+  // Deferred radio init (runs after WiFi/logging stabilize)
+  void deferred_radio_init_();
 
   // Session FSM helpers
   void abort_session_to_idle_();

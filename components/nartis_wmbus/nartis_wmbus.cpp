@@ -160,7 +160,7 @@ void NartisWmbusComponent::setup() {
            this->system_title_[0], this->system_title_[1], this->system_title_[2], this->system_title_[3],
            this->system_title_[4], this->system_title_[5], this->system_title_[6], this->system_title_[7]);
 
-  // Initialize radio
+  // Initialize radio pins and registry early
   ESP_LOGV(TAG, "setup: setting radio pins (sdio=%p sclk=%p csb=%p fcsb=%p gpio1=%p)",
            this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_);
   this->radio_.set_pins(this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_);
@@ -168,15 +168,22 @@ void NartisWmbusComponent::setup() {
   ESP_LOGV(TAG, "setup: preparing sensor registry (%d sensors)", (int) this->registry_.size());
   this->registry_.prepare_requests();
 
-  ESP_LOGV(TAG, "setup: initializing radio (mode=%s, ch=%d)",
+  // Defer radio init by 10s so WiFi/logging are fully up and remote viewer can see diagnostics
+  ESP_LOGI(TAG, "Radio init deferred by %ums — waiting for logs to stabilize...", RADIO_INIT_DELAY_MS);
+  this->set_timeout("radio_init", RADIO_INIT_DELAY_MS, [this]() { this->deferred_radio_init_(); });
+}
+
+void NartisWmbusComponent::deferred_radio_init_() {
+  ESP_LOGI(TAG, "Starting deferred radio initialization (mode=%s, ch=%d)",
            LOG_STR_ARG(mode_to_string_(this->mode_)), this->channel_);
 
   if (!this->radio_.init(this->channel_)) {
-    ESP_LOGE(TAG, "Radio init failed — component marked as failed. Check SPI wiring and pin config!");
+    ESP_LOGE(TAG, "Radio init failed — check SPI wiring and pin config!");
+    this->status_set_error("CMT2300A radio init failed");
     this->mark_failed();
     return;
   }
-  ESP_LOGV(TAG, "setup: radio init succeeded");
+  ESP_LOGV(TAG, "deferred_radio_init_: radio init succeeded");
 
   float freq = CMT2300A_FREQ_MHZ[this->channel_ < 4 ? this->channel_ : 1];
   switch (this->mode_) {
@@ -184,6 +191,7 @@ void NartisWmbusComponent::setup() {
       ESP_LOGI(TAG, "Entering SNIFFER mode on ch %d (%.3f MHz)", this->channel_, freq);
       if (!this->radio_.start_rx(this->channel_)) {
         ESP_LOGE(TAG, "Failed to start RX for sniffer mode");
+        this->status_set_error("start_rx failed (sniffer)");
         this->mark_failed();
         return;
       }
@@ -204,13 +212,14 @@ void NartisWmbusComponent::setup() {
       }
       if (!this->radio_.start_rx(this->channel_)) {
         ESP_LOGE(TAG, "Failed to start RX for listen mode");
+        this->status_set_error("start_rx failed (listen)");
         this->mark_failed();
         return;
       }
       this->state_ = State::LISTENING;
       break;
     default:
-      ESP_LOGV(TAG, "setup: SESSION mode — meter_sys_title_configured=%s, aggressive_reconnect=%s",
+      ESP_LOGV(TAG, "deferred_radio_init_: SESSION mode — meter_sys_title_configured=%s, aggressive_reconnect=%s",
                YESNO(this->meter_sys_title_configured_), YESNO(this->aggressive_reconnect_));
       ESP_LOGD(TAG, "Radio ready, waiting for first poll");
       this->state_ = State::IDLE;
