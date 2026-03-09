@@ -522,6 +522,12 @@ bool CMT2300A::init(uint8_t channel) {
 
 bool CMT2300A::switch_tx(uint8_t channel) {
   ESP_LOGV(TAG, "switch_tx: ch=%d", channel);
+
+  // Soft reset before config switch — firmware does this in pre_config() (0x13FEA)
+  ESP_LOGVV(TAG, "switch_tx: soft reset before config");
+  this->write_reg(CMT2300A_CUS_SOFTRST, 0xFF);
+  delay(10);
+
   if (!this->go_standby()) {
     ESP_LOGW(TAG, "switch_tx: go_standby failed (pre-config)");
     return false;
@@ -543,6 +549,12 @@ bool CMT2300A::switch_tx(uint8_t channel) {
 
 bool CMT2300A::switch_rx(uint8_t channel) {
   ESP_LOGV(TAG, "switch_rx: ch=%d", channel);
+
+  // Soft reset before config switch — firmware does this in pre_config() (0x13FEA)
+  ESP_LOGVV(TAG, "switch_rx: soft reset before config");
+  this->write_reg(CMT2300A_CUS_SOFTRST, 0xFF);
+  delay(10);
+
   if (!this->go_standby()) {
     ESP_LOGW(TAG, "switch_rx: go_standby failed (pre-config)");
     return false;
