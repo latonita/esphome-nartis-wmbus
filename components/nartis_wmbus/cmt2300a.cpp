@@ -150,12 +150,13 @@ void CMT2300A::write_config_(const uint8_t *config, uint8_t channel) {
   this->write_reg(CMT2300A_CUS_CMT10, (tmp & 0xF8) | 0x02);
 
   // Apply post-config fixups (firmware function 0x13666)
-  ESP_LOGVV(TAG, "write_config_: applying post-config fixups");
-  this->apply_fixups_();
+  bool is_tx = (config == CMT2300A_TX_CONFIG);
+  ESP_LOGVV(TAG, "write_config_: applying post-config fixups (mode=%s)", is_tx ? "TX" : "RX");
+  this->apply_fixups_(is_tx);
   ESP_LOGV(TAG, "write_config_: done");
 }
 
-void CMT2300A::apply_fixups_() {
+void CMT2300A::apply_fixups_(bool is_tx) {
   // Post-config register fixups — firmware function 0x13666.
   // Control Bank 1 (0x60-0x6A) is never bulk-written; always individual RMW.
   // SDK names from cmt2300a_defs.h. See decompiled/cmt2300a_fixups.c.
@@ -206,12 +207,18 @@ void CMT2300A::apply_fixups_() {
   this->write_reg(CMT2300A_CUS_TX8, 0x10);
   this->write_reg(CMT2300A_CUS_TX9, 0x02);
 
-  // 8b: Freq config=0 — CDR/AFC tuning (PKT10-PKT13 in Baseband Bank)
-  ESP_LOGVV(TAG, "fixup 8b: CDR/AFC — PKT10=0x8D PKT11=0xF6 PKT12=0x55 PKT13=0x55");
+  // 8b: Freq config=0 — CDR/AFC tuning + sync word (PKT10-PKT13 in Baseband Bank)
+  // PKT12/PKT13 are sync word registers! TX sync=0x55,0x55 vs RX sync=0xD4,0x2D
+  // Firmware applies different values depending on TX/RX config function.
   this->write_reg(CMT2300A_CUS_PKT10, 0x8D);
   this->write_reg(CMT2300A_CUS_PKT11, 0xF6);
-  this->write_reg(CMT2300A_CUS_PKT12, 0x55);
-  this->write_reg(CMT2300A_CUS_PKT13, 0x55);
+  if (is_tx) {
+    ESP_LOGVV(TAG, "fixup 8b: CDR/AFC — PKT10=0x8D PKT11=0xF6 PKT12=0x55 PKT13=0x55 (TX sync)");
+    this->write_reg(CMT2300A_CUS_PKT12, 0x55);
+    this->write_reg(CMT2300A_CUS_PKT13, 0x55);
+  } else {
+    ESP_LOGVV(TAG, "fixup 8b: CDR/AFC — PKT10=0x8D PKT11=0xF6 (RX: preserving sync word 0xD4,0x2D)");
+  }
 
   // 8d: CUS_INT1_CTL — default INT1 source (overridden by start_rx for ISR mode)
   ESP_LOGVV(TAG, "fixup 8d: CUS_INT1_CTL = 0x%02X (TX_FIFO_NMTY)", CMT2300A_INT_SEL_TX_FIFO_NMTY);

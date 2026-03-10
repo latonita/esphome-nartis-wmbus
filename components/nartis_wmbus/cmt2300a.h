@@ -301,7 +301,7 @@ class CMT2300A {
   void spi_write_byte_(uint8_t byte);
   uint8_t spi_read_byte_();
   void write_config_(const uint8_t *config, uint8_t channel);
-  void apply_fixups_();
+  void apply_fixups_(bool is_tx);
   bool wait_for_mode_(uint8_t expected_mode, uint32_t timeout_ms = 50);
   void clear_interrupts_();
   void clear_fifo_();
