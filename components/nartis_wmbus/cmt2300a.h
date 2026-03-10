@@ -23,11 +23,14 @@ static constexpr uint8_t CMT_BANK_CUS_BASEBAND = 29;   // regs 0x38-0x54
 static constexpr uint8_t CMT_BANK_CUS_TX = 11;         // regs 0x55-0x5F
 static constexpr uint8_t CMT_TOTAL_REGS = 96;
 
-// Maximum packet size for RX queue
-static constexpr uint16_t CMT_MAX_PKT_SIZE = 255;
+// Maximum captured over-the-air packet size.
+static constexpr uint16_t CMT_MAX_PKT_SIZE = 300;
 
-// RX fixed payload length (must match PKT14/PKT15 in RX config, capped at merged FIFO size)
-static constexpr uint8_t CMT_RX_PAYLOAD_LEN = 64;
+// Firmware fixup sets FIFO threshold to 15 bytes.
+static constexpr uint8_t CMT_FIFO_THRESHOLD = 15;
+
+// Sniffer fallback path uses a fixed payload length capped by merged FIFO size.
+static constexpr uint8_t CMT_SNIFF_PAYLOAD_LEN = 64;
 
 // TX mode register config (ROM 0x1373C, 96 bytes)
 static const uint8_t CMT2300A_TX_CONFIG[CMT_TOTAL_REGS] = {
@@ -198,11 +201,8 @@ static const uint8_t CMT2300A_RX_CONFIG[CMT_TOTAL_REGS] = {
     0x05,
     0x05,
     // CUS_BASEBAND (0x38-0x54)
-    // NOTE: Original firmware uses Direct mode (0x10) — MCU reads raw bits from GPIO.
-    // We use Packet mode (0x12) so the chip handles preamble/sync and fills FIFO.
-    // Payload capped at 64 bytes (merged FIFO size) — captures W-MBus header + first blocks.
-    // TODO: implement FIFO threshold draining for full-frame (>64 byte) capture.
-    0x12,  // PKT1: was 0x10 (Direct), now Packet mode (DATA_MODE=0x02), preamble detect unchanged
+    // Packet mode baseline. RX profile-specific PKT14/15 values are patched at runtime.
+    0x12,
     0x08,
     0x00,
     0xAA,
@@ -215,8 +215,8 @@ static const uint8_t CMT2300A_RX_CONFIG[CMT_TOTAL_REGS] = {
     0x00,
     0xD4,
     0x2D,
-    0x00,   // PKT14: PAYLOAD_LENG_10_8=0, PKT_TYPE=Fixed
-    0x40,   // PKT15: PAYLOAD_LENG_7_0=64 (match merged FIFO size)
+    0x00,   // PKT14 runtime override
+    0x40,   // PKT15 runtime override
     0x00,
     0x00,
     0x00,
@@ -259,17 +259,40 @@ static const float CMT2300A_FREQ_MHZ[4] = {431.782f, 433.857f, 433.536f, 435.264
 // RX packet passed through FreeRTOS queue
 struct RxPacket {
   uint8_t data[CMT_MAX_PKT_SIZE];
-  uint8_t len;
+  uint16_t len;
 };
+
+enum class RxProfile : uint8_t {
+  METER = 0,
+  SNIFF = 1,
+};
+
+struct RxCaptureState {
+  uint8_t data[CMT_MAX_PKT_SIZE];
+  uint16_t len;
+  uint16_t expected_len;
+  bool collecting;
+};
+
+static inline uint16_t wmbus_air_frame_len(uint8_t l_field) {
+  uint16_t data_len = static_cast<uint16_t>(l_field) + 1;
+  if (data_len <= 10)
+    return data_len + 2;
+  uint16_t remaining = data_len - 10;
+  uint16_t blocks = (remaining + 15) / 16;
+  return data_len + (1 + blocks) * 2;
+}
 
 class CMT2300A {
  public:
-  void set_pins(GPIOPin *sdio, GPIOPin *sclk, GPIOPin *csb, GPIOPin *fcsb, InternalGPIOPin *gpio1) {
+  void set_pins(GPIOPin *sdio, GPIOPin *sclk, GPIOPin *csb, GPIOPin *fcsb, InternalGPIOPin *gpio1,
+                InternalGPIOPin *gpio3 = nullptr) {
     this->pin_sdio_ = sdio;
     this->pin_sclk_ = sclk;
     this->pin_csb_ = csb;
     this->pin_fcsb_ = fcsb;
     this->pin_gpio1_ = gpio1;
+    this->pin_gpio3_ = gpio3;
   }
 
   bool init(uint8_t channel);
@@ -289,22 +312,27 @@ class CMT2300A {
 
   // Non-blocking RX API (for ESPHome loop()-friendly operation)
   // Uses ISR + FreeRTOS queue when GPIO1 is available, falls back to polling otherwise
-  bool start_rx(uint8_t channel);
+  bool start_rx(uint8_t channel, RxProfile profile = RxProfile::METER);
   int16_t check_rx(uint8_t *buf, uint16_t max_len);  // >0=pkt_len, 0=nothing yet, -1=error
   void stop_rx();
 
   bool go_standby();
 
   bool has_isr() const { return this->isr_enabled_; }
+  bool has_meter_capture() const { return this->full_meter_capture_; }
 
  protected:
   void spi_write_byte_(uint8_t byte);
   uint8_t spi_read_byte_();
   void write_config_(const uint8_t *config, uint8_t channel);
   void apply_fixups_(bool is_tx);
+  void configure_rx_profile_(RxProfile profile);
   bool wait_for_mode_(uint8_t expected_mode, uint32_t timeout_ms = 50);
   void clear_interrupts_();
   void clear_fifo_();
+  void reset_rx_capture_();
+  bool append_fifo_bytes_(uint16_t count);
+  bool finish_meter_packet_();
 
   // ISR-driven RX
   bool init_isr_();
@@ -316,6 +344,7 @@ class CMT2300A {
 #ifdef USE_ESP32
   static void receiver_task_(void *arg);
   static void IRAM_ATTR gpio1_isr_(CMT2300A *arg);
+  static void IRAM_ATTR gpio3_isr_(CMT2300A *arg);
 
   TaskHandle_t rx_task_handle_{nullptr};
   QueueHandle_t rx_queue_{nullptr};
@@ -326,9 +355,13 @@ class CMT2300A {
   GPIOPin *pin_csb_{nullptr};
   GPIOPin *pin_fcsb_{nullptr};
   InternalGPIOPin *pin_gpio1_{nullptr};
+  InternalGPIOPin *pin_gpio3_{nullptr};
 
   bool isr_enabled_{false};
+  bool full_meter_capture_{false};
   bool rx_active_{false};
+  RxProfile rx_profile_{RxProfile::METER};
+  RxCaptureState rx_capture_{};
 };
 
 }  // namespace esphome::nartis_wmbus

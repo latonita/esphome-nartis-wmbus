@@ -161,9 +161,10 @@ void NartisWmbusComponent::setup() {
            this->system_title_[4], this->system_title_[5], this->system_title_[6], this->system_title_[7]);
 
   // Initialize radio pins and registry early
-  ESP_LOGV(TAG, "setup: setting radio pins (sdio=%p sclk=%p csb=%p fcsb=%p gpio1=%p)",
-           this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_);
-  this->radio_.set_pins(this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_);
+  ESP_LOGV(TAG, "setup: setting radio pins (sdio=%p sclk=%p csb=%p fcsb=%p gpio1=%p gpio3=%p)",
+           this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_, this->pin_gpio3_);
+  this->radio_.set_pins(this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_,
+                        this->pin_gpio3_);
 
   ESP_LOGV(TAG, "setup: preparing sensor registry (%d sensors)", (int) this->registry_.size());
   this->registry_.prepare_requests();
@@ -189,7 +190,7 @@ void NartisWmbusComponent::deferred_radio_init_() {
   switch (this->mode_) {
     case Mode::SNIFFER:
       ESP_LOGI(TAG, "Entering SNIFFER mode on ch %d (%.3f MHz)", this->channel_, freq);
-      if (!this->radio_.start_rx(this->channel_)) {
+      if (!this->radio_.start_rx(this->channel_, RxProfile::SNIFF)) {
         ESP_LOGE(TAG, "Failed to start RX for sniffer mode");
         this->status_set_error("start_rx failed (sniffer)");
         this->mark_failed();
@@ -210,7 +211,7 @@ void NartisWmbusComponent::deferred_radio_init_() {
                  "Entering LISTEN mode on ch %d (%.3f MHz) — no meter_system_title configured, decryption disabled",
                  this->channel_, freq);
       }
-      if (!this->radio_.start_rx(this->channel_)) {
+      if (!this->radio_.start_rx(this->channel_, RxProfile::METER)) {
         ESP_LOGE(TAG, "Failed to start RX for listen mode");
         this->status_set_error("start_rx failed (listen)");
         this->mark_failed();
@@ -251,6 +252,7 @@ void NartisWmbusComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Client SAP: 0x%02X", DLMS_CLIENT_SAP);
   ESP_LOGCONFIG(TAG, "  Invocation Counter: %u", this->invocation_counter_);
   ESP_LOGCONFIG(TAG, "  Mode: %s", LOG_STR_ARG(mode_to_string_(this->mode_)));
+  ESP_LOGCONFIG(TAG, "  GPIO3/INT2: %s", this->pin_gpio3_ != nullptr ? "wired" : "not configured");
   ESP_LOGCONFIG(TAG, "  Aggressive Reconnect: %s", YESNO(this->aggressive_reconnect_));
   ESP_LOGCONFIG(TAG, "  Sensors: %d", this->registry_.size());
   LOG_UPDATE_INTERVAL(this);
@@ -341,7 +343,7 @@ void NartisWmbusComponent::abort_session_to_idle_() {
 
 bool NartisWmbusComponent::start_rx_with_timeout_(uint32_t timeout_ms, State next_state, const char *failure_log) {
   ESP_LOGV(TAG, "start_rx_with_timeout_: timeout=%ums next_state=%s", timeout_ms, LOG_STR_ARG(state_to_string_(next_state)));
-  if (!this->radio_.start_rx(this->channel_)) {
+  if (!this->radio_.start_rx(this->channel_, RxProfile::METER)) {
     ESP_LOGW(TAG, "%s", failure_log);
     this->set_next_state_(State::IDLE);
     return false;
@@ -404,7 +406,7 @@ void NartisWmbusComponent::handle_wait_install_() {
 
   if (rf_len < 0) {
     ESP_LOGV(TAG, "handle_wait_install_: check_rx error, re-entering RX");
-    this->radio_.start_rx(this->channel_);
+    this->radio_.start_rx(this->channel_, RxProfile::METER);
     return;
   }
 
@@ -420,7 +422,7 @@ void NartisWmbusComponent::handle_wait_install_() {
     ESP_LOGV(TAG, "handle_wait_install_: install reply parsed OK, stripped_len=%d", stripped_len);
   } else {
     ESP_LOGD(TAG, "Install reply: bad frame (%d raw bytes, stripped=%d)", rf_len, stripped_len);
-    this->radio_.start_rx(this->channel_);
+    this->radio_.start_rx(this->channel_, RxProfile::METER);
     return;
   }
 
@@ -480,14 +482,14 @@ void NartisWmbusComponent::handle_wait_aare_() {
 
   if (rf_len < 0) {
     ESP_LOGV(TAG, "handle_wait_aare_: check_rx error, re-entering RX");
-    this->radio_.start_rx(this->channel_);
+    this->radio_.start_rx(this->channel_, RxProfile::METER);
     return;
   }
 
   uint16_t len = this->process_rx_frame_(rf_buf, rf_len, this->apdu_buf_);
   if (len == 0) {
     ESP_LOGV(TAG, "handle_wait_aare_: process_rx_frame_ returned 0, re-entering RX");
-    this->radio_.start_rx(this->channel_);
+    this->radio_.start_rx(this->channel_, RxProfile::METER);
     return;
   }
 
@@ -565,14 +567,14 @@ void NartisWmbusComponent::handle_wait_response_() {
 
   if (rf_len < 0) {
     ESP_LOGV(TAG, "handle_wait_response_: check_rx error, re-entering RX");
-    this->radio_.start_rx(this->channel_);
+    this->radio_.start_rx(this->channel_, RxProfile::METER);
     return;
   }
 
   uint16_t len = this->process_rx_frame_(rf_buf, rf_len, this->apdu_buf_);
   if (len == 0) {
     ESP_LOGV(TAG, "handle_wait_response_: process_rx_frame_ returned 0, re-entering RX");
-    this->radio_.start_rx(this->channel_);
+    this->radio_.start_rx(this->channel_, RxProfile::METER);
     return;
   }
 
@@ -878,7 +880,7 @@ void NartisWmbusComponent::sniff_loop_() {
   }
 
   // Re-enter RX for next packet (check_rx leaves radio in standby after packet)
-  this->radio_.start_rx(this->channel_);
+  this->radio_.start_rx(this->channel_, RxProfile::SNIFF);
 }
 
 // ============================================================================
@@ -917,7 +919,7 @@ void NartisWmbusComponent::listen_loop_() {
   uint16_t stripped_len = wmbus_frame_parse(TAG, rf_buf, rf_len, stripped);
   if (stripped_len < 11) {
     ESP_LOGD(TAG, "LISTEN #%u: bad frame (%d raw bytes)", this->listen_packet_count_, rf_len);
-    this->radio_.start_rx(this->channel_);
+    this->radio_.start_rx(this->channel_, RxProfile::METER);
     return;
   }
 
@@ -934,7 +936,7 @@ void NartisWmbusComponent::listen_loop_() {
   uint16_t dlms_len = this->process_rx_frame_(rf_buf, rf_len, this->apdu_buf_);
   if (dlms_len == 0) {
     ESP_LOGD(TAG, "LISTEN: no DLMS payload");
-    this->radio_.start_rx(this->channel_);
+    this->radio_.start_rx(this->channel_, RxProfile::METER);
     return;
   }
 
@@ -948,7 +950,7 @@ void NartisWmbusComponent::listen_loop_() {
   this->listen_parse_dlms_(this->apdu_buf_, dlms_len);
 
   // Re-enter RX for next packet
-  this->radio_.start_rx(this->channel_);
+  this->radio_.start_rx(this->channel_, RxProfile::METER);
 }
 
 void NartisWmbusComponent::listen_parse_dlms_(const uint8_t *data, uint16_t len) {

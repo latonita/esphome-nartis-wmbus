@@ -6,6 +6,11 @@ namespace esphome::nartis_wmbus {
 
 static const char *const TAG = "nartis_wmbus.cmt2300a";
 
+#ifdef USE_ESP32
+static constexpr uint32_t RX_NOTIFY_PKT_DONE = 1U << 0;
+static constexpr uint32_t RX_NOTIFY_FIFO_TH = 1U << 1;
+#endif
+
 // ============================================================================
 // Bit-banged 3-wire SPI: MSB first
 // Protocol: CSB low -> 8-bit addr (bit7=0 for write, 1 for read) -> 8-bit data -> CSB high
@@ -232,6 +237,107 @@ void CMT2300A::apply_fixups_(bool is_tx) {
 
 void CMT2300A::set_int1_source_(uint8_t source) { this->write_reg(CMT2300A_CUS_INT1_CTL, source); }
 
+void CMT2300A::configure_rx_profile_(RxProfile profile) {
+  this->rx_profile_ = profile;
+  this->reset_rx_capture_();
+
+  bool want_meter_capture = (profile == RxProfile::METER);
+  this->full_meter_capture_ = false;
+
+  uint16_t payload_len = CMT_SNIFF_PAYLOAD_LEN;
+  uint8_t pkt14 = static_cast<uint8_t>(((payload_len >> 8) << 4) & CMT2300A_MASK_PAYLOAD_LENG_10_8);
+  uint8_t pkt15 = static_cast<uint8_t>(payload_len & CMT2300A_MASK_PAYLOAD_LENG_7_0);
+
+  this->write_reg(CMT2300A_CUS_PKT14, pkt14);
+  this->write_reg(CMT2300A_CUS_PKT15, pkt15);
+
+  if (want_meter_capture) {
+    if (this->pin_gpio3_ != nullptr) {
+      ESP_LOGW(TAG, "Meter RX full-frame capture disabled until CMT packet-length semantics are validated; using %u-byte fixed capture",
+               CMT_SNIFF_PAYLOAD_LEN);
+    } else {
+      ESP_LOGW(TAG, "Meter RX using %u-byte fixed capture; GPIO3 not configured and full-frame mode is not yet validated",
+               CMT_SNIFF_PAYLOAD_LEN);
+    }
+  }
+
+  ESP_LOGD(TAG, "RX profile=%s capture=%s pkt14=0x%02X pkt15=0x%02X",
+           profile == RxProfile::METER ? "meter" : "sniff",
+           this->full_meter_capture_ ? "full" : "fixed", pkt14, pkt15);
+}
+
+void CMT2300A::reset_rx_capture_() {
+  this->rx_capture_.len = 0;
+  this->rx_capture_.expected_len = 0;
+  this->rx_capture_.collecting = false;
+}
+
+bool CMT2300A::append_fifo_bytes_(uint16_t count) {
+  if (count == 0)
+    return true;
+
+  if (!this->rx_capture_.collecting)
+    this->rx_capture_.collecting = true;
+
+  if (this->rx_capture_.len + count > CMT_MAX_PKT_SIZE) {
+    ESP_LOGW(TAG, "RX capture overflow (%u + %u > %u)", this->rx_capture_.len, count, CMT_MAX_PKT_SIZE);
+    this->reset_rx_capture_();
+    return false;
+  }
+
+  this->read_fifo(&this->rx_capture_.data[this->rx_capture_.len], count);
+  this->rx_capture_.len += count;
+
+  if (this->rx_capture_.expected_len == 0 && this->rx_capture_.len >= 1) {
+    this->rx_capture_.expected_len = wmbus_air_frame_len(this->rx_capture_.data[0]);
+    if (this->rx_capture_.expected_len > CMT_MAX_PKT_SIZE) {
+      ESP_LOGW(TAG, "RX frame length %u exceeds capture buffer", this->rx_capture_.expected_len);
+      this->reset_rx_capture_();
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool CMT2300A::finish_meter_packet_() {
+#ifdef USE_ESP32
+  if (this->rx_queue_ == nullptr)
+    return false;
+#endif
+
+  if (!this->rx_capture_.collecting || this->rx_capture_.len == 0) {
+    ESP_LOGW(TAG, "RX packet done without buffered data");
+    this->reset_rx_capture_();
+    return false;
+  }
+
+  if (this->rx_capture_.expected_len == 0) {
+    this->rx_capture_.expected_len = wmbus_air_frame_len(this->rx_capture_.data[0]);
+  }
+
+  if (this->rx_capture_.len != this->rx_capture_.expected_len) {
+    ESP_LOGW(TAG, "RX capture length mismatch: got=%u expected=%u",
+             this->rx_capture_.len, this->rx_capture_.expected_len);
+    this->reset_rx_capture_();
+    return false;
+  }
+
+#ifdef USE_ESP32
+  RxPacket pkt{};
+  pkt.len = this->rx_capture_.len;
+  memcpy(pkt.data, this->rx_capture_.data, pkt.len);
+  if (xQueueSend(this->rx_queue_, &pkt, 0) != pdTRUE) {
+    ESP_LOGW(TAG, "RX queue full, packet dropped");
+    this->reset_rx_capture_();
+    return false;
+  }
+#endif
+
+  this->reset_rx_capture_();
+  return true;
+}
+
 // ============================================================================
 // Mode Control
 // ============================================================================
@@ -290,9 +396,14 @@ bool CMT2300A::go_standby() {
 #ifdef USE_ESP32
 
 void IRAM_ATTR CMT2300A::gpio1_isr_(CMT2300A *arg) {
-  // ISR context — only send notification, no SPI here (bit-banged GPIO not ISR-safe)
   BaseType_t woken = pdFALSE;
-  vTaskNotifyGiveFromISR(arg->rx_task_handle_, &woken);
+  xTaskNotifyFromISR(arg->rx_task_handle_, RX_NOTIFY_PKT_DONE, eSetBits, &woken);
+  portYIELD_FROM_ISR(woken);
+}
+
+void IRAM_ATTR CMT2300A::gpio3_isr_(CMT2300A *arg) {
+  BaseType_t woken = pdFALSE;
+  xTaskNotifyFromISR(arg->rx_task_handle_, RX_NOTIFY_FIFO_TH, eSetBits, &woken);
   portYIELD_FROM_ISR(woken);
 }
 
@@ -300,42 +411,78 @@ void CMT2300A::receiver_task_(void *arg) {
   CMT2300A *radio = (CMT2300A *) arg;
 
   while (true) {
-    // Block until GPIO1 ISR fires or 60s timeout (safety watchdog)
-    uint32_t notification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(60000));
+    uint32_t notifications = 0;
+    xTaskNotifyWait(0, UINT32_MAX, &notifications, pdMS_TO_TICKS(60000));
 
     if (!radio->rx_active_)
       continue;  // not in RX mode, ignore stale interrupts
 
-    if (notification == 0) {
-      // 60s timeout with no packet — restart RX to recover from stuck state
+    if (notifications == 0) {
       ESP_LOGD(TAG, "RX task watchdog — restarting RX");
+      radio->reset_rx_capture_();
       radio->clear_interrupts_();
       radio->clear_fifo_();
       radio->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
       continue;
     }
 
-    // ISR fired — read interrupt flags via SPI (safe in task context)
     uint8_t flags = radio->read_reg(CMT2300A_CUS_INT_FLAG);
 
-    if (flags & CMT2300A_MASK_PKT_OK_FLG) {
-      // Fixed-length Packet mode — read configured payload from FIFO
-      RxPacket pkt;
-      pkt.len = CMT_RX_PAYLOAD_LEN;
-      radio->read_fifo(pkt.data, pkt.len);
-      ESP_LOGD(TAG, "RX task: %d bytes, first: %02X %02X %02X %02X",
-               pkt.len, pkt.data[0], pkt.data[1], pkt.data[2], pkt.data[3]);
+    if (radio->rx_profile_ == RxProfile::METER && radio->full_meter_capture_) {
+      bool restart_rx = false;
 
-      // Non-blocking push to queue — drop if full
+      if (flags & CMT2300A_MASK_PKT_ERR_FLG) {
+        ESP_LOGW(TAG, "RX task: packet error during meter capture");
+        radio->reset_rx_capture_();
+        restart_rx = true;
+      } else {
+        if ((notifications & RX_NOTIFY_FIFO_TH) || (flags & CMT2300A_MASK_RX_FIFO_TH_FLG)) {
+          if (!radio->append_fifo_bytes_(CMT_FIFO_THRESHOLD)) {
+            restart_rx = true;
+          }
+        }
+
+        if ((notifications & RX_NOTIFY_PKT_DONE) || (flags & CMT2300A_MASK_PKT_OK_FLG)) {
+          if (!restart_rx) {
+            if (radio->rx_capture_.expected_len == 0) {
+              if (!radio->append_fifo_bytes_(1)) {
+                restart_rx = true;
+              }
+            }
+            if (!restart_rx && radio->rx_capture_.expected_len >= radio->rx_capture_.len) {
+              uint16_t remaining = radio->rx_capture_.expected_len - radio->rx_capture_.len;
+              if (!radio->append_fifo_bytes_(remaining)) {
+                restart_rx = true;
+              }
+            }
+            if (!restart_rx) {
+              radio->finish_meter_packet_();
+            }
+          }
+          restart_rx = true;
+        }
+      }
+
+      radio->clear_interrupts_();
+      if (restart_rx) {
+        radio->clear_fifo_();
+        radio->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
+      }
+      continue;
+    }
+
+    if (flags & CMT2300A_MASK_PKT_OK_FLG) {
+      RxPacket pkt{};
+      pkt.len = CMT_SNIFF_PAYLOAD_LEN;
+      radio->read_fifo(pkt.data, pkt.len);
+      ESP_LOGD(TAG, "RX task: %u bytes, first: %02X %02X %02X %02X",
+               pkt.len, pkt.data[0], pkt.data[1], pkt.data[2], pkt.data[3]);
       if (xQueueSend(radio->rx_queue_, &pkt, 0) != pdTRUE) {
         ESP_LOGW(TAG, "RX queue full, packet dropped");
       }
-
-      // Clear and re-enter RX for next packet
       radio->clear_interrupts_();
       radio->clear_fifo_();
       radio->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
-
     } else if (flags & CMT2300A_MASK_PKT_ERR_FLG) {
       ESP_LOGW(TAG, "RX task: CRC error");
       radio->clear_interrupts_();
@@ -378,6 +525,10 @@ bool CMT2300A::init_isr_() {
   // Attach GPIO1 interrupt (RISING edge = INT1 asserted)
   ESP_LOGV(TAG, "init_isr_: attaching GPIO1 interrupt (RISING edge)");
   this->pin_gpio1_->attach_interrupt(gpio1_isr_, this, gpio::INTERRUPT_RISING_EDGE);
+  if (this->pin_gpio3_ != nullptr) {
+    ESP_LOGV(TAG, "init_isr_: attaching GPIO3 interrupt (RISING edge)");
+    this->pin_gpio3_->attach_interrupt(gpio3_isr_, this, gpio::INTERRUPT_RISING_EDGE);
+  }
 
   this->isr_enabled_ = true;
   ESP_LOGD(TAG, "ISR-driven RX enabled on GPIO1");
@@ -389,6 +540,9 @@ void CMT2300A::deinit_isr_() {
     return;
 
   this->pin_gpio1_->detach_interrupt();
+  if (this->pin_gpio3_ != nullptr) {
+    this->pin_gpio3_->detach_interrupt();
+  }
 
   if (this->rx_task_handle_ != nullptr) {
     vTaskDelete(this->rx_task_handle_);
@@ -418,8 +572,8 @@ bool CMT2300A::init(uint8_t channel) {
 
   // Setup GPIO pins
   ESP_LOGV(TAG, "init: setting up GPIO pins");
-  ESP_LOGVV(TAG, "init: pin_sdio_=%p pin_sclk_=%p pin_csb_=%p pin_fcsb_=%p pin_gpio1_=%p",
-            this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_);
+  ESP_LOGVV(TAG, "init: pin_sdio_=%p pin_sclk_=%p pin_csb_=%p pin_fcsb_=%p pin_gpio1_=%p pin_gpio3_=%p",
+            this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_, this->pin_gpio3_);
   if (this->pin_sdio_ == nullptr || this->pin_sclk_ == nullptr ||
       this->pin_csb_ == nullptr || this->pin_fcsb_ == nullptr) {
     ESP_LOGE(TAG, "init: one or more SPI pins are null!");
@@ -453,6 +607,11 @@ bool CMT2300A::init(uint8_t channel) {
     this->pin_gpio1_->pin_mode(gpio::FLAG_INPUT);
   } else {
     ESP_LOGV(TAG, "init: GPIO1 pin is null — ISR mode will not be available");
+  }
+  if (this->pin_gpio3_ != nullptr) {
+    ESP_LOGV(TAG, "init: GPIO3 pin provided, setting up as input");
+    this->pin_gpio3_->setup();
+    this->pin_gpio3_->pin_mode(gpio::FLAG_INPUT);
   }
 
   // Soft reset: firmware writes 0xFF to CUS_SOFTRST, then go_standby
@@ -641,6 +800,8 @@ uint16_t CMT2300A::receive_packet(uint8_t *buf, uint16_t max_len, uint32_t timeo
     return 0;
   }
 
+  this->configure_rx_profile_(RxProfile::SNIFF);
+
   // Enter RX mode
   this->clear_interrupts_();
   this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
@@ -651,16 +812,11 @@ uint16_t CMT2300A::receive_packet(uint8_t *buf, uint16_t max_len, uint32_t timeo
   while (millis() - start < timeout_ms) {
     uint8_t flags = this->read_reg(CMT2300A_CUS_INT_FLAG);
     if (flags & CMT2300A_MASK_PKT_OK_FLG) {
-      // Read packet length from FIFO status
-      uint8_t pkt_len = this->read_reg(CMT2300A_CUS_PKT7);  // RX payload length register
-      if (pkt_len == 0 || pkt_len > max_len) {
-        ESP_LOGW(TAG, "RX bad length: %d (max=%d)", pkt_len, max_len);
-        this->go_standby();
-        return 0;
-      }
-
+      uint16_t pkt_len = CMT_SNIFF_PAYLOAD_LEN;
+      if (pkt_len > max_len)
+        pkt_len = max_len;
       this->read_fifo(buf, pkt_len);
-      ESP_LOGD(TAG, "RX %d bytes in %ums", pkt_len, millis() - start);
+      ESP_LOGD(TAG, "RX %u bytes in %ums", pkt_len, millis() - start);
       ESP_LOGV(TAG, "RX first bytes: %02X %02X %02X %02X ...",
                pkt_len > 0 ? buf[0] : 0, pkt_len > 1 ? buf[1] : 0,
                pkt_len > 2 ? buf[2] : 0, pkt_len > 3 ? buf[3] : 0);
@@ -689,16 +845,17 @@ uint16_t CMT2300A::receive_packet(uint8_t *buf, uint16_t max_len, uint32_t timeo
 // Non-blocking RX API
 // ============================================================================
 
-bool CMT2300A::start_rx(uint8_t channel) {
-  ESP_LOGV(TAG, "start_rx: ch=%d isr=%s", channel, this->isr_enabled_ ? "yes" : "no");
+bool CMT2300A::start_rx(uint8_t channel, RxProfile profile) {
+  ESP_LOGV(TAG, "start_rx: ch=%d profile=%s isr=%s", channel,
+           profile == RxProfile::METER ? "meter" : "sniff", this->isr_enabled_ ? "yes" : "no");
   if (!this->switch_rx(channel)) {
     ESP_LOGW(TAG, "start_rx: switch_rx failed");
     return false;
   }
 
-  // Configure INT1 for PKT_DONE (fires on both OK and error packets)
+  this->configure_rx_profile_(profile);
+
   if (this->isr_enabled_) {
-    ESP_LOGVV(TAG, "start_rx: setting INT1 source to PKT_DONE for ISR");
     this->set_int1_source_(CMT2300A_INT_SEL_PKT_DONE);
   }
 
@@ -748,9 +905,77 @@ void CMT2300A::stop_rx() {
 int16_t CMT2300A::check_rx_polling_(uint8_t *buf, uint16_t max_len) {
   uint8_t flags = this->read_reg(CMT2300A_CUS_INT_FLAG);
 
+  if (this->rx_profile_ == RxProfile::METER && this->full_meter_capture_) {
+    if (flags & CMT2300A_MASK_PKT_ERR_FLG) {
+      ESP_LOGW(TAG, "RX packet error (polling meter, flags=0x%02X)", flags);
+      this->reset_rx_capture_();
+      this->clear_interrupts_();
+      this->clear_fifo_();
+      this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
+      return -1;
+    }
+
+    if (flags & CMT2300A_MASK_RX_FIFO_TH_FLG) {
+      if (!this->append_fifo_bytes_(CMT_FIFO_THRESHOLD)) {
+        this->clear_interrupts_();
+        this->clear_fifo_();
+        this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
+        return -1;
+      }
+      this->clear_interrupts_();
+      return 0;
+    }
+
+    if (flags & CMT2300A_MASK_PKT_OK_FLG) {
+      if (this->rx_capture_.expected_len == 0) {
+        if (!this->append_fifo_bytes_(1)) {
+          this->clear_interrupts_();
+          this->clear_fifo_();
+          this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
+          return -1;
+        }
+      }
+
+      if (this->rx_capture_.expected_len < this->rx_capture_.len) {
+        ESP_LOGW(TAG, "RX capture overrun before packet completion");
+        this->reset_rx_capture_();
+        this->clear_interrupts_();
+        this->clear_fifo_();
+        this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
+        return -1;
+      }
+
+      uint16_t remaining = this->rx_capture_.expected_len - this->rx_capture_.len;
+      if (!this->append_fifo_bytes_(remaining)) {
+        this->clear_interrupts_();
+        this->clear_fifo_();
+        this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
+        return -1;
+      }
+
+      if (this->rx_capture_.len > max_len) {
+        ESP_LOGW(TAG, "RX packet too large for polling buffer: %u > %u", this->rx_capture_.len, max_len);
+        this->reset_rx_capture_();
+        this->clear_interrupts_();
+        this->clear_fifo_();
+        this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
+        return -1;
+      }
+
+      memcpy(buf, this->rx_capture_.data, this->rx_capture_.len);
+      int16_t pkt_len = this->rx_capture_.len;
+      this->reset_rx_capture_();
+      this->clear_interrupts_();
+      this->clear_fifo_();
+      this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
+      return pkt_len;
+    }
+
+    return 0;
+  }
+
   if (flags & CMT2300A_MASK_PKT_OK_FLG) {
-    // Fixed-length Packet mode — read configured payload from FIFO
-    uint8_t pkt_len = CMT_RX_PAYLOAD_LEN;
+    uint16_t pkt_len = CMT_SNIFF_PAYLOAD_LEN;
     if (pkt_len > max_len)
       pkt_len = max_len;
     this->read_fifo(buf, pkt_len);
