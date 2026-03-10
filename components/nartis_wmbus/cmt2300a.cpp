@@ -312,19 +312,16 @@ void CMT2300A::receiver_task_(void *arg) {
     uint8_t flags = radio->read_reg(CMT2300A_CUS_INT_FLAG);
 
     if (flags & CMT2300A_MASK_PKT_OK_FLG) {
-      uint8_t pkt_len = radio->read_reg(CMT2300A_CUS_PKT7);
-      if (pkt_len > 0 && pkt_len <= CMT_MAX_PKT_SIZE) {
-        RxPacket pkt;
-        pkt.len = pkt_len;
-        radio->read_fifo(pkt.data, pkt_len);
-        ESP_LOGD(TAG, "RX task: %d bytes", pkt_len);
+      // Fixed-length Packet mode — read configured payload from FIFO
+      RxPacket pkt;
+      pkt.len = CMT_RX_PAYLOAD_LEN;
+      radio->read_fifo(pkt.data, pkt.len);
+      ESP_LOGD(TAG, "RX task: %d bytes, first: %02X %02X %02X %02X",
+               pkt.len, pkt.data[0], pkt.data[1], pkt.data[2], pkt.data[3]);
 
-        // Non-blocking push to queue — drop if full
-        if (xQueueSend(radio->rx_queue_, &pkt, 0) != pdTRUE) {
-          ESP_LOGW(TAG, "RX queue full, packet dropped");
-        }
-      } else {
-        ESP_LOGW(TAG, "RX task: bad length %d", pkt_len);
+      // Non-blocking push to queue — drop if full
+      if (xQueueSend(radio->rx_queue_, &pkt, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "RX queue full, packet dropped");
       }
 
       // Clear and re-enter RX for next packet
@@ -488,11 +485,11 @@ bool CMT2300A::init(uint8_t channel) {
   this->clear_interrupts_();
   this->clear_fifo_();
 
-  // Verify chip: read back a known register
-  uint8_t check = this->read_reg(CMT2300A_CUS_CMT1);
-  ESP_LOGV(TAG, "init: chip verify — CUS_CMT1(reg 0x00) = 0x%02X", check);
+  // CUS_CMT2 (reg 0x01) defaults to 0x66 in both TX and RX configs — use it
+  uint8_t check = this->read_reg(CMT2300A_CUS_CMT2);
+  ESP_LOGV(TAG, "init: chip verify — CUS_CMT2(reg 0x01) = 0x%02X (expect 0x66)", check);
   if (check == 0xFF || check == 0x00) {
-    ESP_LOGE(TAG, "CMT2300A not responding (read 0x%02X from reg 0x00) — check SPI wiring!", check);
+    ESP_LOGE(TAG, "CMT2300A not responding (read 0x%02X from reg 0x01, expected 0x66) — check SPI wiring!", check);
     return false;
   }
 
@@ -745,17 +742,13 @@ int16_t CMT2300A::check_rx_polling_(uint8_t *buf, uint16_t max_len) {
   uint8_t flags = this->read_reg(CMT2300A_CUS_INT_FLAG);
 
   if (flags & CMT2300A_MASK_PKT_OK_FLG) {
-    uint8_t pkt_len = this->read_reg(CMT2300A_CUS_PKT7);
-    ESP_LOGV(TAG, "check_rx_poll: PKT_OK, len=%d, flags=0x%02X", pkt_len, flags);
-    if (pkt_len == 0 || pkt_len > max_len) {
-      ESP_LOGW(TAG, "RX bad length: %d (max=%d)", pkt_len, max_len);
-      return -1;
-    }
+    // Fixed-length Packet mode — read configured payload from FIFO
+    uint8_t pkt_len = CMT_RX_PAYLOAD_LEN;
+    if (pkt_len > max_len)
+      pkt_len = max_len;
     this->read_fifo(buf, pkt_len);
-    ESP_LOGD(TAG, "RX %d bytes (polling)", pkt_len);
-    ESP_LOGV(TAG, "RX first bytes: %02X %02X %02X %02X ...",
-             pkt_len > 0 ? buf[0] : 0, pkt_len > 1 ? buf[1] : 0,
-             pkt_len > 2 ? buf[2] : 0, pkt_len > 3 ? buf[3] : 0);
+    ESP_LOGD(TAG, "RX %d bytes (polling), first: %02X %02X %02X %02X",
+             pkt_len, buf[0], buf[1], buf[2], buf[3]);
     return pkt_len;
   }
 
