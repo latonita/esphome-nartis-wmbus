@@ -163,9 +163,17 @@ void CMT2300A::apply_fixups_(bool is_tx) {
 
   uint8_t tmp;
 
-  // 1: CUS_IO_SEL — GPIO pin mode: GPIO2=INT1, GPIO3=INT2, GPIO1=DOUT/DIN
-  uint8_t io_sel_val = CMT2300A_GPIO3_SEL_INT2 | CMT2300A_GPIO2_SEL_INT1;
-  ESP_LOGVV(TAG, "fixup 1: CUS_IO_SEL = 0x%02X (GPIO2=INT1, GPIO3=INT2)", io_sel_val);
+  // 1: CUS_IO_SEL — GPIO pin routing
+  // TX: GPIO3=INT2 (unused), GPIO2=INT1, GPIO1=DOUT/DIN
+  // RX: GPIO3=DOUT (data bits), GPIO2=INT1 (SYNC_OK), GPIO1=DOUT/DIN
+  uint8_t io_sel_val;
+  if (is_tx) {
+    io_sel_val = CMT2300A_GPIO3_SEL_INT2 | CMT2300A_GPIO2_SEL_INT1;
+    ESP_LOGVV(TAG, "fixup 1: CUS_IO_SEL = 0x%02X (TX: GPIO3=INT2, GPIO2=INT1)", io_sel_val);
+  } else {
+    io_sel_val = CMT2300A_GPIO3_SEL_DOUT | CMT2300A_GPIO2_SEL_INT1;
+    ESP_LOGVV(TAG, "fixup 1: CUS_IO_SEL = 0x%02X (RX: GPIO3=DOUT, GPIO2=INT1)", io_sel_val);
+  }
   this->write_reg(CMT2300A_CUS_IO_SEL, io_sel_val);
 
   // 2: CUS_INT2_CTL — preserve top 3 bits, set INT2_SEL = RX_FIFO_TH
@@ -208,8 +216,9 @@ void CMT2300A::apply_fixups_(bool is_tx) {
   this->write_reg(CMT2300A_CUS_TX9, 0x02);
 
   // 8b: Freq config=0 — CDR/AFC tuning + sync word (PKT10-PKT13 in Baseband Bank)
-  // PKT12/PKT13 are sync word registers! TX sync=0x55,0x55 vs RX sync=0xD4,0x2D
-  // Firmware applies different values depending on TX/RX config function.
+  // PKT12/PKT13 are sync word registers — always write correct values for mode.
+  // Firmware always writes these (set_freq_config at 0x1334e), values are same for both modes
+  // except sync word which differs: TX=0x55,0x55  RX=0xD4,0x2D
   this->write_reg(CMT2300A_CUS_PKT10, 0x8D);
   this->write_reg(CMT2300A_CUS_PKT11, 0xF6);
   if (is_tx) {
@@ -217,7 +226,9 @@ void CMT2300A::apply_fixups_(bool is_tx) {
     this->write_reg(CMT2300A_CUS_PKT12, 0x55);
     this->write_reg(CMT2300A_CUS_PKT13, 0x55);
   } else {
-    ESP_LOGVV(TAG, "fixup 8b: CDR/AFC — PKT10=0x8D PKT11=0xF6 (RX: preserving sync word 0xD4,0x2D)");
+    ESP_LOGVV(TAG, "fixup 8b: CDR/AFC — PKT10=0x8D PKT11=0xF6 PKT12=0xD4 PKT13=0x2D (RX sync)");
+    this->write_reg(CMT2300A_CUS_PKT12, 0xD4);
+    this->write_reg(CMT2300A_CUS_PKT13, 0x2D);
   }
 
   // 8d: CUS_INT1_CTL — default INT1 source (overridden by start_rx for ISR mode)
@@ -284,128 +295,189 @@ bool CMT2300A::go_standby() {
 }
 
 // ============================================================================
-// ISR-driven RX (ESP32 only)
+// Direct Mode RX (ESP32 only)
+// ============================================================================
+// CMT2300A demodulates RF and outputs raw bits on GPIO3 (DOUT).
+// GPIO2 (INT1) signals SYNC_OK when sync word 0xD42D is detected.
+// After SYNC_OK, we sample DOUT at 2400 Hz using esp_timer to reconstruct bytes.
+// L-field (first byte) determines total frame length including CRC blocks.
 // ============================================================================
 
 #ifdef USE_ESP32
 
-void IRAM_ATTR CMT2300A::gpio1_isr_(CMT2300A *arg) {
-  // ISR context — only send notification, no SPI here (bit-banged GPIO not ISR-safe)
-  BaseType_t woken = pdFALSE;
-  vTaskNotifyGiveFromISR(arg->rx_task_handle_, &woken);
-  portYIELD_FROM_ISR(woken);
+void IRAM_ATTR CMT2300A::sync_ok_isr_(void *arg) {
+  CMT2300A *radio = static_cast<CMT2300A *>(arg);
+  DirectRxState &drx = radio->drx_;
+
+  // Ignore if already sampling a frame
+  if (drx.active)
+    return;
+
+  // Reset state for new frame
+  drx.byte_count = 0;
+  drx.bit_count = 0;
+  drx.current_byte = 0;
+  drx.expected_air_len = 0;
+  drx.frame_ready = false;
+  drx.total_bits = 0;
+  drx.active = true;
+
+  // Start sampling timer — half-bit delay to center on first data bit
+  esp_timer_start_once(radio->sample_timer_, DIRECT_RX_HALF_BIT_US);
 }
 
-void CMT2300A::receiver_task_(void *arg) {
-  CMT2300A *radio = (CMT2300A *) arg;
+void IRAM_ATTR CMT2300A::sample_timer_cb_(void *arg) {
+  CMT2300A *radio = static_cast<CMT2300A *>(arg);
+  DirectRxState &drx = radio->drx_;
 
-  while (true) {
-    // Block until GPIO1 ISR fires or 60s timeout (safety watchdog)
-    uint32_t notification = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(60000));
+  if (!drx.active)
+    return;
 
-    if (!radio->rx_active_)
-      continue;  // not in RX mode, ignore stale interrupts
+  // Read DOUT pin (direct register access for speed)
+  bool bit = gpio_get_level(drx.dout_gpio_num) != 0;
 
-    if (notification == 0) {
-      // 60s timeout with no packet — restart RX to recover from stuck state
-      ESP_LOGD(TAG, "RX task watchdog — restarting RX");
-      radio->clear_interrupts_();
-      radio->clear_fifo_();
-      radio->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
-      continue;
-    }
+  // Accumulate MSB first (per firmware PKT14 PAYLOAD_BIT_ORDER=0)
+  drx.current_byte = (drx.current_byte << 1) | (bit ? 1 : 0);
+  drx.bit_count++;
+  drx.total_bits++;
 
-    // ISR fired — read interrupt flags via SPI (safe in task context)
-    uint8_t flags = radio->read_reg(CMT2300A_CUS_INT_FLAG);
+  if (drx.bit_count == 8) {
+    drx.frame_buf[drx.byte_count] = drx.current_byte;
+    drx.byte_count++;
+    drx.bit_count = 0;
+    drx.current_byte = 0;
 
-    if (flags & CMT2300A_MASK_PKT_OK_FLG) {
-      // Fixed-length Packet mode — read configured payload from FIFO
-      RxPacket pkt;
-      pkt.len = CMT_RX_PAYLOAD_LEN;
-      radio->read_fifo(pkt.data, pkt.len);
-      ESP_LOGD(TAG, "RX task: %d bytes, first: %02X %02X %02X %02X",
-               pkt.len, pkt.data[0], pkt.data[1], pkt.data[2], pkt.data[3]);
-
-      // Non-blocking push to queue — drop if full
-      if (xQueueSend(radio->rx_queue_, &pkt, 0) != pdTRUE) {
-        ESP_LOGW(TAG, "RX queue full, packet dropped");
+    // After L-field (first byte), calculate expected air frame length
+    if (drx.byte_count == 1) {
+      uint8_t l_field = drx.frame_buf[0];
+      if (l_field < 10 || l_field > 250) {
+        // Invalid L-field — noise after false sync
+        drx.active = false;
+        return;  // timer stops (one-shot)
       }
+      drx.expected_air_len = wmbus_air_frame_len(l_field);
+      if (drx.expected_air_len > DIRECT_RX_MAX_FRAME)
+        drx.expected_air_len = DIRECT_RX_MAX_FRAME;
+    }
 
-      // Clear and re-enter RX for next packet
-      radio->clear_interrupts_();
-      radio->clear_fifo_();
-      radio->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
+    // Frame complete?
+    if (drx.expected_air_len > 0 && drx.byte_count >= drx.expected_air_len) {
+      drx.active = false;
+      drx.frame_ready = true;
+      return;  // timer stops (one-shot)
+    }
 
-    } else if (flags & CMT2300A_MASK_PKT_ERR_FLG) {
-      ESP_LOGW(TAG, "RX task: CRC error");
-      radio->clear_interrupts_();
-      radio->clear_fifo_();
-      radio->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
-
-    } else {
-      // Spurious interrupt — clear and continue
-      radio->clear_interrupts_();
+    // Buffer overflow guard
+    if (drx.byte_count >= DIRECT_RX_MAX_FRAME) {
+      drx.active = false;
+      drx.frame_ready = true;
+      return;
     }
   }
+
+  // Timeout guard
+  if (drx.total_bits >= DIRECT_RX_TIMEOUT_BITS) {
+    drx.active = false;
+    drx.frame_ready = (drx.byte_count > 0);
+    return;
+  }
+
+  // Schedule next sample (one-shot chaining for precise timing)
+  esp_timer_start_once(radio->sample_timer_, DIRECT_RX_BIT_PERIOD_US);
 }
 
-bool CMT2300A::init_isr_() {
-  if (this->pin_gpio1_ == nullptr) {
-    ESP_LOGV(TAG, "init_isr_: pin_gpio1_ is null, cannot use ISR");
+bool CMT2300A::init_direct_rx_() {
+  if (this->pin_gpio1_ == nullptr || this->pin_dout_ == nullptr) {
+    ESP_LOGD(TAG, "init_direct_rx_: pin_gpio1=%p pin_dout=%p — need both for Direct mode",
+             this->pin_gpio1_, this->pin_dout_);
     return false;
   }
 
-  ESP_LOGV(TAG, "init_isr_: creating RX queue (depth=3, item_size=%d)", (int) sizeof(RxPacket));
-  // Create packet queue (depth 3)
-  this->rx_queue_ = xQueueCreate(3, sizeof(RxPacket));
-  if (this->rx_queue_ == nullptr) {
-    ESP_LOGE(TAG, "Failed to create RX queue");
+  // Setup DOUT pin as input
+  this->pin_dout_->setup();
+  this->pin_dout_->pin_mode(gpio::FLAG_INPUT);
+
+  // Cache raw GPIO number for fast ISR access
+  this->drx_.dout_gpio_num = static_cast<gpio_num_t>(this->pin_dout_->get_pin());
+  ESP_LOGV(TAG, "init_direct_rx_: DOUT on GPIO%d", (int) this->drx_.dout_gpio_num);
+
+  // Create esp_timer for bit sampling (one-shot, chained for precision)
+  esp_timer_create_args_t timer_args = {};
+  timer_args.callback = sample_timer_cb_;
+  timer_args.arg = this;
+  timer_args.dispatch_method = ESP_TIMER_TASK;  // TASK dispatch (ISR needs CONFIG_ESP_TIMER_SUPPORTS_ISR_DISPATCH_METHOD)
+  timer_args.name = "cmt_rx_bit";
+
+  esp_err_t err = esp_timer_create(&timer_args, &this->sample_timer_);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "init_direct_rx_: esp_timer_create failed: %d", err);
     return false;
   }
-  ESP_LOGVV(TAG, "init_isr_: RX queue created OK");
 
-  // Create receiver task (3KB stack, priority 2 — above idle, below WiFi)
-  ESP_LOGV(TAG, "init_isr_: creating receiver task (3KB stack, prio 2, core 1)");
-  BaseType_t ret = xTaskCreatePinnedToCore(receiver_task_, "cmt_rx", 3 * 1024, this, 2, &this->rx_task_handle_, 1);
-  if (ret != pdPASS) {
-    ESP_LOGE(TAG, "Failed to create RX task (ret=%d)", ret);
-    vQueueDelete(this->rx_queue_);
-    this->rx_queue_ = nullptr;
-    return false;
-  }
-  ESP_LOGVV(TAG, "init_isr_: receiver task created OK");
+  // Setup GPIO1 (NIRQ = INT1) for SYNC_OK interrupt
+  this->pin_gpio1_->setup();
+  this->pin_gpio1_->pin_mode(gpio::FLAG_INPUT);
+  this->pin_gpio1_->attach_interrupt(sync_ok_isr_, this, gpio::INTERRUPT_RISING_EDGE);
 
-  // Attach GPIO1 interrupt (RISING edge = INT1 asserted)
-  ESP_LOGV(TAG, "init_isr_: attaching GPIO1 interrupt (RISING edge)");
-  this->pin_gpio1_->attach_interrupt(gpio1_isr_, this, gpio::INTERRUPT_RISING_EDGE);
+  memset(&this->drx_.frame_buf, 0, sizeof(this->drx_.frame_buf));
+  this->drx_.active = false;
+  this->drx_.frame_ready = false;
 
-  this->isr_enabled_ = true;
-  ESP_LOGD(TAG, "ISR-driven RX enabled on GPIO1");
+  this->direct_rx_enabled_ = true;
+  ESP_LOGD(TAG, "Direct mode RX enabled (DOUT=GPIO%d, SYNC=GPIO1/NIRQ)", (int) this->drx_.dout_gpio_num);
   return true;
 }
 
-void CMT2300A::deinit_isr_() {
-  if (!this->isr_enabled_)
+void CMT2300A::deinit_direct_rx_() {
+  if (!this->direct_rx_enabled_)
     return;
 
-  this->pin_gpio1_->detach_interrupt();
-
-  if (this->rx_task_handle_ != nullptr) {
-    vTaskDelete(this->rx_task_handle_);
-    this->rx_task_handle_ = nullptr;
-  }
-  if (this->rx_queue_ != nullptr) {
-    vQueueDelete(this->rx_queue_);
-    this->rx_queue_ = nullptr;
+  if (this->sample_timer_ != nullptr) {
+    esp_timer_stop(this->sample_timer_);
+    esp_timer_delete(this->sample_timer_);
+    this->sample_timer_ = nullptr;
   }
 
-  this->isr_enabled_ = false;
+  if (this->pin_gpio1_ != nullptr) {
+    this->pin_gpio1_->detach_interrupt();
+  }
+
+  this->drx_.active = false;
+  this->drx_.frame_ready = false;
+  this->direct_rx_enabled_ = false;
+}
+
+int16_t CMT2300A::check_rx_direct_(uint8_t *buf, uint16_t max_len) {
+  if (!this->drx_.frame_ready)
+    return 0;
+
+  uint16_t len = this->drx_.byte_count;
+  if (len > max_len)
+    len = max_len;
+
+  memcpy(buf, this->drx_.frame_buf, len);
+
+  ESP_LOGD(TAG, "RX direct: %d bytes, L=0x%02X, first: %02X %02X %02X %02X",
+           len,
+           len > 0 ? buf[0] : 0,
+           len > 0 ? buf[0] : 0, len > 1 ? buf[1] : 0,
+           len > 2 ? buf[2] : 0, len > 3 ? buf[3] : 0);
+
+  // Reset state and re-arm RX (lightweight — no full config reload)
+  this->drx_.frame_ready = false;
+  this->drx_.active = false;
+  this->drx_.byte_count = 0;
+  this->clear_interrupts_();
+  this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
+
+  return len;
 }
 
 #else  // !USE_ESP32
 
-bool CMT2300A::init_isr_() { return false; }
-void CMT2300A::deinit_isr_() {}
+bool CMT2300A::init_direct_rx_() { return false; }
+void CMT2300A::deinit_direct_rx_() {}
+int16_t CMT2300A::check_rx_direct_(uint8_t *buf, uint16_t max_len) { return 0; }
 
 #endif  // USE_ESP32
 
@@ -508,15 +580,14 @@ bool CMT2300A::init(uint8_t channel) {
   ESP_LOGV(TAG, "init: post-config regs: MODE_STA=0x%02X INT_EN=0x%02X IO_SEL=0x%02X FIFO_CTL=0x%02X",
            reg_mode_sta, reg_int_en, reg_io_sel, reg_fifo_ctl);
 
-  // Try to initialize ISR-driven RX (falls back to polling if GPIO1 not available)
-  ESP_LOGV(TAG, "init: attempting ISR setup...");
-  if (!this->init_isr_()) {
-    ESP_LOGD(TAG, "GPIO1 not available — using polling RX");
-  } else {
-    ESP_LOGV(TAG, "init: ISR-driven RX enabled successfully");
+  // Try to initialize Direct mode RX (falls back to polling if pins not available)
+  ESP_LOGV(TAG, "init: attempting Direct mode RX setup...");
+  if (!this->init_direct_rx_()) {
+    ESP_LOGD(TAG, "Direct mode RX not available (need pin_gpio1 + pin_dout) — using polling RX");
   }
 
-  ESP_LOGD(TAG, "CMT2300A initialized OK (reg0=0x%02X, isr=%s)", check, this->isr_enabled_ ? "yes" : "no");
+  ESP_LOGD(TAG, "CMT2300A initialized OK (reg0=0x%02X, direct_rx=%s)", check,
+           this->direct_rx_enabled_ ? "yes" : "no");
   return true;
 }
 
@@ -690,16 +761,20 @@ uint16_t CMT2300A::receive_packet(uint8_t *buf, uint16_t max_len, uint32_t timeo
 // ============================================================================
 
 bool CMT2300A::start_rx(uint8_t channel) {
-  ESP_LOGV(TAG, "start_rx: ch=%d isr=%s", channel, this->isr_enabled_ ? "yes" : "no");
+  ESP_LOGV(TAG, "start_rx: ch=%d direct_rx=%s", channel, this->direct_rx_enabled_ ? "yes" : "no");
   if (!this->switch_rx(channel)) {
     ESP_LOGW(TAG, "start_rx: switch_rx failed");
     return false;
   }
 
-  // Configure INT1 for PKT_DONE (fires on both OK and error packets)
-  if (this->isr_enabled_) {
-    ESP_LOGVV(TAG, "start_rx: setting INT1 source to PKT_DONE for ISR");
-    this->set_int1_source_(CMT2300A_INT_SEL_PKT_DONE);
+  if (this->direct_rx_enabled_) {
+    // Direct mode: INT1 fires on SYNC_OK, ISR starts bit sampling
+    ESP_LOGVV(TAG, "start_rx: setting INT1 source to SYNC_OK for Direct mode");
+    this->set_int1_source_(CMT2300A_INT_SEL_SYNC_OK);
+    // Reset direct RX state
+    this->drx_.active = false;
+    this->drx_.frame_ready = false;
+    this->drx_.byte_count = 0;
   }
 
   this->clear_interrupts_();
@@ -707,37 +782,31 @@ bool CMT2300A::start_rx(uint8_t channel) {
   this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);
   this->rx_active_ = true;
 
-#ifdef USE_ESP32
-  // Drain any stale packets from queue
-  if (this->isr_enabled_ && this->rx_queue_ != nullptr) {
-    RxPacket discard;
-    int drained = 0;
-    while (xQueueReceive(this->rx_queue_, &discard, 0) == pdTRUE) {
-      drained++;
-    }
-    if (drained > 0) {
-      ESP_LOGV(TAG, "start_rx: drained %d stale packets from queue", drained);
-    }
-  }
-#endif
-
   ESP_LOGV(TAG, "start_rx: now listening on ch%d", channel);
   return true;
 }
 
 int16_t CMT2300A::check_rx(uint8_t *buf, uint16_t max_len) {
-  if (this->isr_enabled_) {
-    return this->check_rx_isr_(buf, max_len);
+  if (this->direct_rx_enabled_) {
+    return this->check_rx_direct_(buf, max_len);
   }
   return this->check_rx_polling_(buf, max_len);
 }
 
 void CMT2300A::stop_rx() {
-  ESP_LOGV(TAG, "stop_rx: stopping RX, isr=%s", this->isr_enabled_ ? "yes" : "no");
+  ESP_LOGV(TAG, "stop_rx: stopping RX, direct=%s", this->direct_rx_enabled_ ? "yes" : "no");
   this->rx_active_ = false;
 
-  // Restore INT1 source to default (TX_FIFO_NMTY)
-  if (this->isr_enabled_) {
+  if (this->direct_rx_enabled_) {
+    // Stop any in-progress bit sampling
+#ifdef USE_ESP32
+    if (this->sample_timer_ != nullptr) {
+      esp_timer_stop(this->sample_timer_);
+    }
+#endif
+    this->drx_.active = false;
+    this->drx_.frame_ready = false;
+    // Restore INT1 source to default
     this->set_int1_source_(CMT2300A_INT_SEL_TX_FIFO_NMTY);
   }
 
@@ -745,17 +814,22 @@ void CMT2300A::stop_rx() {
 }
 
 // Polling fallback: read interrupt flags via SPI each call (~50μs)
+// Note: only useful for Packet mode (not currently used in Direct mode)
 int16_t CMT2300A::check_rx_polling_(uint8_t *buf, uint16_t max_len) {
   uint8_t flags = this->read_reg(CMT2300A_CUS_INT_FLAG);
 
   if (flags & CMT2300A_MASK_PKT_OK_FLG) {
-    // Fixed-length Packet mode — read configured payload from FIFO
-    uint8_t pkt_len = CMT_RX_PAYLOAD_LEN;
-    if (pkt_len > max_len)
+    // Read packet length from PKT7 register
+    uint8_t pkt_len = this->read_reg(CMT2300A_CUS_PKT7);
+    if (pkt_len == 0 || pkt_len > max_len)
       pkt_len = max_len;
     this->read_fifo(buf, pkt_len);
     ESP_LOGD(TAG, "RX %d bytes (polling), first: %02X %02X %02X %02X",
-             pkt_len, buf[0], buf[1], buf[2], buf[3]);
+             pkt_len,
+             pkt_len > 0 ? buf[0] : 0, pkt_len > 1 ? buf[1] : 0,
+             pkt_len > 2 ? buf[2] : 0, pkt_len > 3 ? buf[3] : 0);
+    this->clear_interrupts_();
+    this->write_reg(CMT2300A_CUS_MODE_CTL, CMT2300A_GO_RX);  // re-enter RX
     return pkt_len;
   }
 
@@ -767,28 +841,6 @@ int16_t CMT2300A::check_rx_polling_(uint8_t *buf, uint16_t max_len) {
   }
 
   return 0;  // nothing yet
-}
-
-// ISR-driven: instant check of FreeRTOS queue (no SPI)
-int16_t CMT2300A::check_rx_isr_(uint8_t *buf, uint16_t max_len) {
-#ifdef USE_ESP32
-  if (this->rx_queue_ == nullptr)
-    return 0;
-
-  RxPacket pkt;
-  if (xQueueReceive(this->rx_queue_, &pkt, 0) != pdTRUE)
-    return 0;  // nothing yet — instant return
-
-  if (pkt.len > max_len) {
-    ESP_LOGW(TAG, "RX packet too large for buffer: %d > %d", pkt.len, max_len);
-    return -1;
-  }
-
-  memcpy(buf, pkt.data, pkt.len);
-  return pkt.len;
-#else
-  return this->check_rx_polling_(buf, max_len);
-#endif
 }
 
 }  // namespace esphome::nartis_wmbus

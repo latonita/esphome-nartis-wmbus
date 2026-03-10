@@ -7,9 +7,8 @@
 #include "cmt2300a_defs.h"
 
 #ifdef USE_ESP32
-#include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
-#include <freertos/task.h>
+#include <esp_timer.h>
+#include <driver/gpio.h>
 #endif
 
 namespace esphome::nartis_wmbus {
@@ -23,11 +22,14 @@ static constexpr uint8_t CMT_BANK_CUS_BASEBAND = 29;   // regs 0x38-0x54
 static constexpr uint8_t CMT_BANK_CUS_TX = 11;         // regs 0x55-0x5F
 static constexpr uint8_t CMT_TOTAL_REGS = 96;
 
-// Maximum packet size for RX queue
-static constexpr uint16_t CMT_MAX_PKT_SIZE = 255;
+// Maximum packet size for RX queue (W-MBus frames with CRC can be ~291 bytes)
+static constexpr uint16_t CMT_MAX_PKT_SIZE = 300;
 
-// RX fixed payload length (must match PKT14/PKT15 in RX config, capped at merged FIFO size)
-static constexpr uint8_t CMT_RX_PAYLOAD_LEN = 64;
+// Direct mode RX constants
+static constexpr uint32_t DIRECT_RX_BIT_PERIOD_US = 417;   // 1000000 / 2400 bps
+static constexpr uint32_t DIRECT_RX_HALF_BIT_US = 208;     // center of first bit cell
+static constexpr uint32_t DIRECT_RX_TIMEOUT_BITS = 2500;   // ~1.04s, max 300 bytes = 2400 bits
+static constexpr uint16_t DIRECT_RX_MAX_FRAME = 300;
 
 // TX mode register config (ROM 0x1373C, 96 bytes)
 static const uint8_t CMT2300A_TX_CONFIG[CMT_TOTAL_REGS] = {
@@ -198,11 +200,9 @@ static const uint8_t CMT2300A_RX_CONFIG[CMT_TOTAL_REGS] = {
     0x05,
     0x05,
     // CUS_BASEBAND (0x38-0x54)
-    // NOTE: Original firmware uses Direct mode (0x10) — MCU reads raw bits from GPIO.
-    // We use Packet mode (0x12) so the chip handles preamble/sync and fills FIFO.
-    // Payload capped at 64 bytes (merged FIFO size) — captures W-MBus header + first blocks.
-    // TODO: implement FIFO threshold draining for full-frame (>64 byte) capture.
-    0x12,  // PKT1: was 0x10 (Direct), now Packet mode (DATA_MODE=0x02), preamble detect unchanged
+    // Direct mode RX (DATA_MODE=0): chip demodulates and outputs raw bits on DOUT (GPIO3).
+    // MCU samples bits via timer ISR after SYNC_OK interrupt. Matches original firmware.
+    0x10,  // PKT1: Direct mode, RX preamble detect
     0x08,
     0x00,
     0xAA,
@@ -213,10 +213,10 @@ static const uint8_t CMT2300A_RX_CONFIG[CMT_TOTAL_REGS] = {
     0x00,
     0x00,
     0x00,
-    0xD4,
-    0x2D,
-    0x00,   // PKT14: PAYLOAD_LENG_10_8=0, PKT_TYPE=Fixed
-    0x40,   // PKT15: PAYLOAD_LENG_7_0=64 (match merged FIFO size)
+    0xD4,  // PKT12: RX sync word byte 1
+    0x2D,  // PKT13: RX sync word byte 0
+    0x00,  // PKT14
+    0x1F,  // PKT15
     0x00,
     0x00,
     0x00,
@@ -259,8 +259,31 @@ static const float CMT2300A_FREQ_MHZ[4] = {431.782f, 433.857f, 433.536f, 435.264
 // RX packet passed through FreeRTOS queue
 struct RxPacket {
   uint8_t data[CMT_MAX_PKT_SIZE];
-  uint8_t len;
+  uint16_t len;
 };
+
+// Direct mode RX bit-sampling state
+struct DirectRxState {
+  uint8_t frame_buf[DIRECT_RX_MAX_FRAME];
+  volatile uint16_t byte_count;
+  volatile uint8_t bit_count;         // bits accumulated in current byte (0-7)
+  volatile uint8_t current_byte;      // byte being assembled (MSB first)
+  volatile uint16_t expected_air_len; // total bytes to receive (computed from L-field)
+  volatile bool active;               // timer is sampling bits
+  volatile bool frame_ready;          // complete frame available for check_rx
+  volatile uint32_t total_bits;       // timeout counter
+  gpio_num_t dout_gpio_num;           // cached GPIO number for fast read
+};
+
+// Calculate W-MBus over-the-air frame length (with interleaved CRCs) from L-field
+static inline uint16_t wmbus_air_frame_len(uint8_t l_field) {
+  uint16_t data_len = (uint16_t) l_field + 1;  // L-field byte + payload
+  if (data_len <= 10)
+    return data_len + 2;  // single CRC block
+  uint16_t remaining = data_len - 10;
+  uint16_t blocks = (remaining + 15) / 16;  // ceiling division
+  return data_len + (1 + blocks) * 2;
+}
 
 class CMT2300A {
  public:
@@ -269,8 +292,9 @@ class CMT2300A {
     this->pin_sclk_ = sclk;
     this->pin_csb_ = csb;
     this->pin_fcsb_ = fcsb;
-    this->pin_gpio1_ = gpio1;
+    this->pin_gpio1_ = gpio1;  // connected to module NIRQ (CMT2300A GPIO2 = INT1)
   }
+  void set_pin_dout(InternalGPIOPin *pin) { this->pin_dout_ = pin; }  // module GPIO3 = DOUT
 
   bool init(uint8_t channel);
 
@@ -288,14 +312,14 @@ class CMT2300A {
   uint16_t receive_packet(uint8_t *buf, uint16_t max_len, uint32_t timeout_ms, uint8_t channel);
 
   // Non-blocking RX API (for ESPHome loop()-friendly operation)
-  // Uses ISR + FreeRTOS queue when GPIO1 is available, falls back to polling otherwise
+  // Uses Direct mode RX (DOUT bit sampling) when GPIO1+DOUT available, falls back to polling
   bool start_rx(uint8_t channel);
   int16_t check_rx(uint8_t *buf, uint16_t max_len);  // >0=pkt_len, 0=nothing yet, -1=error
   void stop_rx();
 
   bool go_standby();
 
-  bool has_isr() const { return this->isr_enabled_; }
+  bool has_direct_rx() const { return this->direct_rx_enabled_; }
 
  protected:
   void spi_write_byte_(uint8_t byte);
@@ -306,28 +330,33 @@ class CMT2300A {
   void clear_interrupts_();
   void clear_fifo_();
 
-  // ISR-driven RX
-  bool init_isr_();
-  void deinit_isr_();
+  // Common
   void set_int1_source_(uint8_t source);
-  int16_t check_rx_polling_(uint8_t *buf, uint16_t max_len);
-  int16_t check_rx_isr_(uint8_t *buf, uint16_t max_len);
+
+  // Direct mode RX (matches firmware: DOUT on GPIO3, SYNC_OK on GPIO2/INT1)
+  bool init_direct_rx_();
+  void deinit_direct_rx_();
+  int16_t check_rx_direct_(uint8_t *buf, uint16_t max_len);
 
 #ifdef USE_ESP32
-  static void receiver_task_(void *arg);
-  static void IRAM_ATTR gpio1_isr_(CMT2300A *arg);
+  static void IRAM_ATTR sync_ok_isr_(void *arg);
+  static void IRAM_ATTR sample_timer_cb_(void *arg);
 
-  TaskHandle_t rx_task_handle_{nullptr};
-  QueueHandle_t rx_queue_{nullptr};
+  esp_timer_handle_t sample_timer_{nullptr};
+  DirectRxState drx_{};
 #endif
+
+  // Fallback polling RX (no GPIO pins needed)
+  int16_t check_rx_polling_(uint8_t *buf, uint16_t max_len);
 
   GPIOPin *pin_sdio_{nullptr};
   GPIOPin *pin_sclk_{nullptr};
   GPIOPin *pin_csb_{nullptr};
   GPIOPin *pin_fcsb_{nullptr};
-  InternalGPIOPin *pin_gpio1_{nullptr};
+  InternalGPIOPin *pin_gpio1_{nullptr};   // module NIRQ = CMT2300A GPIO2 (INT1/SYNC_OK)
+  InternalGPIOPin *pin_dout_{nullptr};    // module GPIO3 = CMT2300A GPIO3 (DOUT)
 
-  bool isr_enabled_{false};
+  bool direct_rx_enabled_{false};
   bool rx_active_{false};
 };
 

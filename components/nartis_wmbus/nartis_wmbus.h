@@ -48,6 +48,7 @@ class NartisWmbusComponent : public PollingComponent {
   void set_pin_csb(GPIOPin *pin) { this->pin_csb_ = pin; }
   void set_pin_fcsb(GPIOPin *pin) { this->pin_fcsb_ = pin; }
   void set_pin_gpio1(InternalGPIOPin *pin) { this->pin_gpio1_ = pin; }
+  void set_pin_dout(InternalGPIOPin *pin) { this->pin_dout_ = pin; }
   void set_channel(uint8_t ch) { this->channel_ = ch; }
   void set_decryption_key(const std::array<uint8_t, 16> &key) { this->decryption_key_ = key; }
   void set_meter_id(const std::string &id) {
@@ -106,6 +107,7 @@ class NartisWmbusComponent : public PollingComponent {
   GPIOPin *pin_csb_{nullptr};
   GPIOPin *pin_fcsb_{nullptr};
   InternalGPIOPin *pin_gpio1_{nullptr};
+  InternalGPIOPin *pin_dout_{nullptr};
   uint8_t channel_{1};
   Mode mode_{Mode::SESSION};
   bool aggressive_reconnect_{false};
