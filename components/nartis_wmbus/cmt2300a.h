@@ -26,6 +26,9 @@ static constexpr uint8_t CMT_TOTAL_REGS = 96;
 // Maximum packet size for RX queue
 static constexpr uint16_t CMT_MAX_PKT_SIZE = 255;
 
+// RX fixed payload length (must match PKT14/PKT15 in RX config, capped at merged FIFO size)
+static constexpr uint8_t CMT_RX_PAYLOAD_LEN = 64;
+
 // TX mode register config (ROM 0x1373C, 96 bytes)
 static const uint8_t CMT2300A_TX_CONFIG[CMT_TOTAL_REGS] = {
     // CUS_CMT (0x00-0x0B)
@@ -195,7 +198,11 @@ static const uint8_t CMT2300A_RX_CONFIG[CMT_TOTAL_REGS] = {
     0x05,
     0x05,
     // CUS_BASEBAND (0x38-0x54)
-    0x10,
+    // NOTE: Original firmware uses Direct mode (0x10) — MCU reads raw bits from GPIO.
+    // We use Packet mode (0x12) so the chip handles preamble/sync and fills FIFO.
+    // Payload capped at 64 bytes (merged FIFO size) — captures W-MBus header + first blocks.
+    // TODO: implement FIFO threshold draining for full-frame (>64 byte) capture.
+    0x12,  // PKT1: was 0x10 (Direct), now Packet mode (DATA_MODE=0x02), preamble detect unchanged
     0x08,
     0x00,
     0xAA,
@@ -208,8 +215,8 @@ static const uint8_t CMT2300A_RX_CONFIG[CMT_TOTAL_REGS] = {
     0x00,
     0xD4,
     0x2D,
-    0x00,
-    0x1F,
+    0x00,   // PKT14: PAYLOAD_LENG_10_8=0, PKT_TYPE=Fixed
+    0x40,   // PKT15: PAYLOAD_LENG_7_0=64 (match merged FIFO size)
     0x00,
     0x00,
     0x00,
