@@ -161,12 +161,9 @@ void NartisWmbusComponent::setup() {
            this->system_title_[4], this->system_title_[5], this->system_title_[6], this->system_title_[7]);
 
   // Initialize radio pins and registry early
-  ESP_LOGV(TAG, "setup: setting radio pins (sdio=%p sclk=%p csb=%p fcsb=%p gpio1=%p dout=%p)",
-           this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_, this->pin_dout_);
+  ESP_LOGV(TAG, "setup: setting radio pins (sdio=%p sclk=%p csb=%p fcsb=%p gpio1=%p)",
+           this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_);
   this->radio_.set_pins(this->pin_sdio_, this->pin_sclk_, this->pin_csb_, this->pin_fcsb_, this->pin_gpio1_);
-  if (this->pin_dout_ != nullptr) {
-    this->radio_.set_pin_dout(this->pin_dout_);
-  }
 
   ESP_LOGV(TAG, "setup: preparing sensor registry (%d sensors)", (int) this->registry_.size());
   this->registry_.prepare_requests();

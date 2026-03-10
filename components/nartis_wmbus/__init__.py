@@ -17,7 +17,6 @@ CONF_PIN_SCLK = "pin_sclk"
 CONF_PIN_CSB = "pin_csb"
 CONF_PIN_FCSB = "pin_fcsb"
 CONF_PIN_GPIO1 = "pin_gpio1"
-CONF_PIN_DOUT = "pin_dout"
 CONF_CHANNEL = "channel"
 CONF_DECRYPTION_KEY = "decryption_key"
 CONF_METER_ID = "meter_id"
@@ -69,7 +68,6 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_PIN_CSB): pins.gpio_output_pin_schema,
             cv.Required(CONF_PIN_FCSB): pins.gpio_output_pin_schema,
             cv.Optional(CONF_PIN_GPIO1): pins.internal_gpio_input_pin_schema,
-            cv.Optional(CONF_PIN_DOUT): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_CHANNEL, default=1): cv.int_range(min=0, max=3),
             cv.Optional(CONF_DECRYPTION_KEY, default=DEFAULT_KEY): validate_key,
             cv.Optional(CONF_METER_ID): validate_meter_id,
@@ -104,10 +102,6 @@ async def to_code(config):
     if CONF_PIN_GPIO1 in config:
         pin_gpio1 = await cg.gpio_pin_expression(config[CONF_PIN_GPIO1])
         cg.add(var.set_pin_gpio1(pin_gpio1))
-
-    if CONF_PIN_DOUT in config:
-        pin_dout = await cg.gpio_pin_expression(config[CONF_PIN_DOUT])
-        cg.add(var.set_pin_dout(pin_dout))
 
     cg.add(var.set_channel(config[CONF_CHANNEL]))
 
