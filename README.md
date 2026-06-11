@@ -7,8 +7,7 @@
 [Пульсар-М](https://github.com/latonita/esphome-pulsar-m) •
 [Энергомера BLE](https://github.com/latonita/esphome-energomera-ble) •
 [Нартис RF433](https://github.com/latonita/esphome-nartis-rf-meter) •
-[Nordic UART (BLE NUS)](https://github.com/latonita/esphome-nordic-uart-ble) •
-**Нартис W-MBus (RF 433)**
+[Nordic UART (BLE NUS)](https://github.com/latonita/esphome-nordic-uart-ble)
 
 # esphome-nartis-wmbus
 
@@ -16,5 +15,5 @@
 
 Нартис использует протокол, похожий на WMbus, но "свой". 
 Работающий компонент тут 
-[Нартис RF433](https://github.com/latonita/esphome-nartis-rf-meter) •
+[https://github.com/esphome-nartis-rf-meter](https://github.com/latonita/esphome-nartis-rf-meter)
 
